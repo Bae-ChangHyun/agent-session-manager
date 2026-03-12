@@ -1,0 +1,170 @@
+"""Service for migrating Claude Code sessions between projects."""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+
+from cc_tui.models import PROJECTS_DIR, encode_path
+
+
+@dataclass
+class MigrateResult:
+    """Result of a migration operation."""
+
+    success: bool
+    sessions_copied: int = 0
+    memory_copied: bool = False
+    message: str = ""
+
+
+def get_available_projects() -> list[tuple[str, str]]:
+    """Get list of (encoded_name, decoded_hint) for available project dirs."""
+    if not PROJECTS_DIR.exists():
+        return []
+    result = []
+    for d in sorted(PROJECTS_DIR.iterdir()):
+        if d.is_dir():
+            # Try to decode the path hint
+            parts = d.name.strip("-").split("-")
+            hint = "/" + "/".join(p for p in parts if p)
+            result.append((d.name, hint))
+    return result
+
+
+def find_similar_dirs(target_encoded: str) -> list[str]:
+    """Find directories similar to the target encoded name."""
+    if not PROJECTS_DIR.exists():
+        return []
+    # Extract key parts for matching
+    parts = set(target_encoded.strip("-").split("-"))
+    results = []
+    for d in PROJECTS_DIR.iterdir():
+        if d.is_dir():
+            dir_parts = set(d.name.strip("-").split("-"))
+            overlap = parts & dir_parts
+            if len(overlap) >= len(parts) * 0.5:
+                results.append(d.name)
+    return results
+
+
+def migrate_sessions(
+    source_path: str,
+    target_path: str,
+    mode: str = "append",
+) -> MigrateResult:
+    """Migrate sessions from source project to target project.
+
+    Args:
+        source_path: Absolute path of source project
+        target_path: Absolute path of target project
+        mode: "append" (keep existing, skip duplicates) or "overwrite"
+    """
+    source_encoded = encode_path(source_path)
+    target_encoded = encode_path(target_path)
+    source_dir = PROJECTS_DIR / source_encoded
+    target_dir = PROJECTS_DIR / target_encoded
+
+    # Validate source
+    if not source_dir.exists():
+        similar = find_similar_dirs(source_encoded)
+        msg = f"Source not found: {source_dir}"
+        if similar:
+            msg += f"\nSimilar: {', '.join(similar)}"
+        return MigrateResult(success=False, message=msg)
+
+    # Check for session files
+    source_sessions = list(source_dir.glob("*.jsonl"))
+    if not source_sessions:
+        return MigrateResult(success=False, message="No session files in source")
+
+    # Prepare target
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Overwrite mode: clear existing
+    if mode == "overwrite":
+        for f in target_dir.glob("*.jsonl"):
+            f.unlink()
+        idx = target_dir / "sessions-index.json"
+        if idx.exists():
+            idx.unlink()
+
+    # Copy sessions
+    copied = 0
+    for src_file in source_sessions:
+        dest_file = target_dir / src_file.name
+        if mode == "append" and dest_file.exists():
+            continue  # Skip duplicates
+        shutil.copy2(str(src_file), str(dest_file))
+        copied += 1
+
+    # Copy memory
+    memory_copied = False
+    source_memory = source_dir / "memory"
+    if source_memory.exists():
+        target_memory = target_dir / "memory"
+        if mode == "overwrite" and target_memory.exists():
+            shutil.rmtree(str(target_memory))
+        if not target_memory.exists():
+            shutil.copytree(str(source_memory), str(target_memory))
+            memory_copied = True
+        else:
+            # Append: copy only new files
+            for f in source_memory.rglob("*"):
+                if f.is_file():
+                    rel = f.relative_to(source_memory)
+                    dest = target_memory / rel
+                    if not dest.exists():
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(f), str(dest))
+                        memory_copied = True
+
+    # Copy sessions-index.json
+    src_index = source_dir / "sessions-index.json"
+    if src_index.exists():
+        dest_index = target_dir / "sessions-index.json"
+        if mode == "overwrite" or not dest_index.exists():
+            shutil.copy2(str(src_index), str(dest_index))
+
+    # Update paths in copied files if source != target
+    if source_path != target_path:
+        _update_paths(target_dir, source_path, target_path, source_encoded, target_encoded)
+
+    return MigrateResult(
+        success=True,
+        sessions_copied=copied,
+        memory_copied=memory_copied,
+        message=f"{copied} sessions migrated ({source_path} -> {target_path})",
+    )
+
+
+def _update_paths(
+    target_dir: Path,
+    source_path: str,
+    target_path: str,
+    source_encoded: str,
+    target_encoded: str,
+) -> None:
+    """Update path references in migrated files."""
+    # Update JSONL files
+    for jsonl in target_dir.glob("*.jsonl"):
+        try:
+            content = jsonl.read_text()
+            content = content.replace(source_path, target_path)
+            jsonl.write_text(content)
+        except OSError:
+            pass
+
+    # Update sessions-index.json
+    idx = target_dir / "sessions-index.json"
+    if idx.exists():
+        try:
+            content = idx.read_text()
+            content = content.replace(source_path, target_path)
+            content = content.replace(source_encoded, target_encoded)
+            idx.write_text(content)
+        except OSError:
+            pass
