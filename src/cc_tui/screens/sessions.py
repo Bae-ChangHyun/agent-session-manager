@@ -80,7 +80,7 @@ class SessionsPane(Container):
         table = self.query_one("#sessions-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
-        table.add_columns("Directory", "Size", "Files", "Envs", "Orphaned")
+        table.add_columns("Directory", "Files", "Envs", "Orphaned")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -98,7 +98,6 @@ class SessionsPane(Container):
             orphaned = "[red]Yes[/]" if s.is_orphaned else "[green]No[/]"
             table.add_row(
                 s.dir_name,
-                _format_bytes(s.size_bytes),
                 str(s.file_count),
                 str(len(s.session_env_dirs)),
                 orphaned,

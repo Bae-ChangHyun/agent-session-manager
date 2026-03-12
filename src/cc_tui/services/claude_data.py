@@ -26,7 +26,18 @@ from cc_tui.models import (
 
 
 def _dir_size(path: Path) -> int:
-    """Calculate total size of a directory."""
+    """Calculate total size of a directory using du for speed."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["du", "-sb", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.split()[0])
+    except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+        pass
+    # Fallback to Python
     total = 0
     try:
         for entry in path.rglob("*"):
@@ -116,7 +127,7 @@ def get_sessions() -> list[SessionInfo]:
                 SessionInfo(
                     dir_name=d.name,
                     actual_path=str(d),
-                    size_bytes=_dir_size(d),
+                    size_bytes=0,  # Calculated lazily in UI
                     file_count=_file_count(d),
                     session_env_dirs=_find_session_envs_for_dir(d.name),
                     is_orphaned=is_orphaned,
@@ -321,7 +332,7 @@ def get_file_history() -> list[FileHistoryEntry]:
                 FileHistoryEntry(
                     dir_name=d.name,
                     path=str(d),
-                    size_bytes=_dir_size(d),
+                    size_bytes=0,
                     is_orphaned=is_orphaned,
                 )
             )
@@ -334,12 +345,15 @@ def get_debug_files() -> list[DebugEntry]:
     """Get debug file entries."""
     if not DEBUG_DIR.exists():
         return []
+    # Build set of active session IDs for orphan detection
+    active_session_ids = _get_active_session_ids()
     result = []
     try:
         for f in sorted(DEBUG_DIR.iterdir()):
             size = f.stat().st_size if f.is_file() else _dir_size(f)
+            is_orphaned = f.stem not in active_session_ids if active_session_ids else False
             result.append(
-                DebugEntry(name=f.name, path=str(f), size_bytes=size)
+                DebugEntry(name=f.name, path=str(f), size_bytes=size, is_orphaned=is_orphaned)
             )
     except (PermissionError, OSError):
         pass
@@ -350,16 +364,32 @@ def get_todos() -> list[TodoEntry]:
     """Get todo file entries."""
     if not TODOS_DIR.exists():
         return []
+    active_session_ids = _get_active_session_ids()
     result = []
     try:
         for f in sorted(TODOS_DIR.iterdir()):
             size = f.stat().st_size if f.is_file() else _dir_size(f)
+            is_orphaned = f.stem not in active_session_ids if active_session_ids else False
             result.append(
-                TodoEntry(name=f.name, path=str(f), size_bytes=size)
+                TodoEntry(name=f.name, path=str(f), size_bytes=size, is_orphaned=is_orphaned)
             )
     except (PermissionError, OSError):
         pass
     return result
+
+
+def _get_active_session_ids() -> set[str]:
+    """Get set of all active session IDs from project directories."""
+    ids = set()
+    if PROJECTS_DIR.exists():
+        try:
+            for d in PROJECTS_DIR.iterdir():
+                if d.is_dir():
+                    for jsonl in d.glob("*.jsonl"):
+                        ids.add(jsonl.stem)
+        except (PermissionError, OSError):
+            pass
+    return ids
 
 
 def get_stats() -> Stats:
@@ -378,6 +408,8 @@ def get_stats() -> Stats:
         total_todos=len(todos),
         orphaned_sessions=sum(1 for s in sessions if s.is_orphaned),
         orphaned_file_history=sum(1 for f in file_history if f.is_orphaned),
+        orphaned_debug=sum(1 for d in debug_files if d.is_orphaned),
+        orphaned_todos=sum(1 for t in todos if t.is_orphaned),
         claude_dir_size=_dir_size(CLAUDE_DIR) if CLAUDE_DIR.exists() else 0,
         projects_dir_size=_dir_size(PROJECTS_DIR) if PROJECTS_DIR.exists() else 0,
     )
