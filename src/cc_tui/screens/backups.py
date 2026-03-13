@@ -136,18 +136,18 @@ class BackupsPane(Container):
     def _do_config_backup(self) -> None:
         path = create_config_backup()
         if path:
-            self.app.call_from_thread(self.app.notify, f"Config backup created: {path}")
+            self.app.call_from_thread(self.app.notify, t("bak.config_created", path=path))
         else:
-            self.app.call_from_thread(self.app.notify, "Failed to create backup", severity="error")
+            self.app.call_from_thread(self.app.notify, t("bak.backup_failed"), severity="error")
         self.app.call_from_thread(self.refresh_data)
 
     def _do_full_backup(self) -> None:
-        self.app.call_from_thread(self.app.notify, "Creating full backup...")
+        self.app.call_from_thread(self.app.notify, t("bak.full_creating"))
         path = create_full_backup()
         if path:
-            self.app.call_from_thread(self.app.notify, f"Full backup created: {path}")
+            self.app.call_from_thread(self.app.notify, t("bak.full_created", path=path))
         else:
-            self.app.call_from_thread(self.app.notify, "Failed to create backup", severity="error")
+            self.app.call_from_thread(self.app.notify, t("bak.backup_failed"), severity="error")
         self.app.call_from_thread(self.refresh_data)
 
     def _do_restore(self, backup, is_full: bool) -> None:
@@ -157,17 +157,17 @@ class BackupsPane(Container):
             else:
                 ok = restore_config_backup(backup.path)
             if ok:
-                self.app.call_from_thread(self.app.notify, f"Restored: {backup.name}")
+                self.app.call_from_thread(self.app.notify, t("bak.restored", name=backup.name))
             else:
-                self.app.call_from_thread(self.app.notify, "Restore failed", severity="error")
+                self.app.call_from_thread(self.app.notify, t("bak.restore_failed"), severity="error")
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)
 
     def _do_delete(self, backup) -> None:
         def _work():
             if delete_backup(backup.path):
-                self.app.call_from_thread(self.app.notify, f"Deleted: {backup.name}")
+                self.app.call_from_thread(self.app.notify, t("bak.deleted", name=backup.name))
             else:
-                self.app.call_from_thread(self.app.notify, "Delete failed", severity="error")
+                self.app.call_from_thread(self.app.notify, t("bak.delete_failed"), severity="error")
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)

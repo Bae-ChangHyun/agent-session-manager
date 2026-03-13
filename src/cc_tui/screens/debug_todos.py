@@ -432,7 +432,7 @@ class DebugTodosPane(Container):
                     callback=lambda ok, n=name: self._trash_todo(n) if ok else None,
                 )
         elif action_id == "prune-debug":
-            count = count_empty_files(DEBUG_DIR)
+            count = self._empty_debug
             if count == 0:
                 self.app.notify(t("common.no_items"))
                 return
@@ -441,7 +441,7 @@ class DebugTodosPane(Container):
                 callback=lambda ok: self._do_prune_debug() if ok else None,
             )
         elif action_id == "prune-todo":
-            count = count_empty_files(TODOS_DIR)
+            count = self._empty_todo
             if count == 0:
                 self.app.notify(t("common.no_items"))
                 return
@@ -505,13 +505,18 @@ class DebugTodosPane(Container):
         def _work():
             if kind == "debug":
                 ok, fail = trash_debug_files(names)
-                self._selected_debug.clear()
             else:
                 ok, fail = trash_todo_files(names)
-                self._selected_todo.clear()
-            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
-            self.app.call_from_thread(self.refresh_data)
+            self.app.call_from_thread(self._on_bulk_done, kind, ok, fail)
         self.run_worker(_work, thread=True)
+
+    def _on_bulk_done(self, kind: str, ok: int, fail: int) -> None:
+        if kind == "debug":
+            self._selected_debug.clear()
+        else:
+            self._selected_todo.clear()
+        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
+        self.refresh_data()
 
     def _do_trash_orphaned_debug(self) -> None:
         def _work():
