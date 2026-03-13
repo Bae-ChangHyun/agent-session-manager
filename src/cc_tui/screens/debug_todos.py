@@ -349,8 +349,9 @@ class DebugTodosPane(Container):
             if p.is_file():
                 content = p.read_text(errors="replace")[:2000]
             elif p.is_dir():
-                files = list(p.iterdir())[:20]
-                content = f"Directory with {len(list(p.iterdir()))} items:\n\n"
+                all_files = list(p.iterdir())
+                files = all_files[:20]
+                content = f"Directory with {len(all_files)} items:\n\n"
                 for f in files:
                     size = f.stat().st_size if f.is_file() else 0
                     content += f"  {f.name}  ({format_bytes(size)})\n"

@@ -112,7 +112,9 @@ def restore_full_backup(backup_path: str) -> bool:
         return False
     try:
         # Create FULL backup of current state before restoring (not just config)
-        create_full_backup()
+        safety = create_full_backup()
+        if safety is None:
+            return False  # Refuse to proceed without a safety backup
 
         claude_backup = src / ".claude"
         json_backup = src / ".claude.json"

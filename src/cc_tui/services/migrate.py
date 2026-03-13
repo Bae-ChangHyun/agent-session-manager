@@ -174,17 +174,23 @@ def _update_paths(
         try:
             lines = jsonl.read_text().splitlines()
             updated = []
+            modified = False
             for line in lines:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     obj = json.loads(line)
+                    before = json.dumps(obj, ensure_ascii=False)
                     _replace_in_obj(obj, source_path, target_path)
-                    updated.append(json.dumps(obj, ensure_ascii=False))
+                    after = json.dumps(obj, ensure_ascii=False)
+                    updated.append(after)
+                    if before != after:
+                        modified = True
                 except json.JSONDecodeError:
                     updated.append(line)
-            jsonl.write_text("\n".join(updated) + "\n")
+            if modified:
+                jsonl.write_text("\n".join(updated) + "\n")
         except OSError:
             pass
 

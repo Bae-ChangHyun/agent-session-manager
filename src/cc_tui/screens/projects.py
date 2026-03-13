@@ -444,16 +444,19 @@ class ProjectsPane(Container):
             self.app.notify(t("proj.trash_fail"), severity="error")
 
     def _do_remove_config(self, path: str) -> None:
-        create_config_backup()
-        if remove_project_from_json(path):
-            self.app.notify(t("proj.config_removed", path=path))
-            # Full rebuild needed since project is gone from config
-            self.refresh_data()
-        else:
-            self.app.notify(t("proj.config_fail"), severity="error")
+        def _work():
+            create_config_backup()
+            if remove_project_from_json(path):
+                self.app.call_from_thread(self.app.notify, t("proj.config_removed", path=path))
+                self.app.call_from_thread(self.refresh_data)
+            else:
+                self.app.call_from_thread(self.app.notify, t("proj.config_fail"), severity="error")
+        self.run_worker(_work, thread=True)
 
     def _do_trash_orphaned_sessions(self) -> None:
         names = getattr(self, "_orphaned_session_dirs", [])
-        ok, fail = trash_sessions(names)
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            ok, fail = trash_sessions(names)
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)

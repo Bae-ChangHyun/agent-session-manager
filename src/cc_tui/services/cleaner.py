@@ -12,7 +12,7 @@ from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR,
 
 # --- Path traversal prevention ---
 
-_ALLOWED_ROOTS = (CLAUDE_DIR, Path.home() / ".cc-tui")
+_ALLOWED_ROOTS = (CLAUDE_DIR,)
 
 
 def _validate_path(path: Path) -> None:
