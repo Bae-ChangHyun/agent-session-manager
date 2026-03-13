@@ -420,15 +420,20 @@ class ProjectsPane(Container):
         if not project_dir:
             self.app.notify(t("proj.no_dir_info"), severity="error")
             return
-        if trash_single_session_file(project_dir, session_id):
+        node = getattr(self, "_selected_session_node", None)
+
+        def _work():
+            ok = trash_single_session_file(project_dir, session_id)
+            self.app.call_from_thread(self._on_session_trashed, ok, session_id, project_dir, node)
+        self.run_worker(_work, thread=True)
+
+    def _on_session_trashed(self, ok: bool, session_id: str, project_dir: str, node) -> None:
+        if ok:
             self.app.notify(t("proj.trash_ok", sid=f"{session_id[:12]}..."))
             self._selected_session = None
-            # Remove node from tree without full rebuild
-            node = getattr(self, "_selected_session_node", None)
             if node:
                 parent = node.parent
                 node.remove()
-                # Update parent project label's session count
                 if parent and parent.data and parent.data[0] == "project":
                     session_dir = PROJECTS_DIR / project_dir
                     new_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0

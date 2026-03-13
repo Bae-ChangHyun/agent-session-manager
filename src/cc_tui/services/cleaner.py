@@ -78,7 +78,7 @@ def _trash_related_session_envs(dir_name: str) -> None:
         return
     try:
         for d in SESSION_ENV_DIR.iterdir():
-            if d.is_dir() and dir_name in d.name:
+            if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
                 _validate_path(d)
                 _log_trash(d, "session")
                 send2trash(str(d))

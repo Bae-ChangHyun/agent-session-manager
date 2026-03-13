@@ -10,6 +10,14 @@ from pathlib import Path
 from cc_tui.models import BACKUP_BASE_DIR, CLAUDE_DIR, CLAUDE_JSON, BackupInfo
 
 
+def _validate_backup_path(path: Path) -> None:
+    """Ensure path is within the backup directory."""
+    resolved = path.resolve()
+    allowed = BACKUP_BASE_DIR.resolve()
+    if not (resolved == allowed or str(resolved).startswith(str(allowed) + "/")):
+        raise ValueError(f"Backup path outside allowed directory: {path}")
+
+
 def _ensure_backup_dir() -> Path:
     """Ensure backup directory exists."""
     BACKUP_BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,21 +105,23 @@ def restore_config_backup(backup_path: str) -> bool:
     if not src.exists():
         return False
     try:
+        _validate_backup_path(src)
         # Create a backup of current before restoring
         create_config_backup()
         shutil.copy2(str(src), str(CLAUDE_JSON))
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 
 def restore_full_backup(backup_path: str) -> bool:
-    """Restore a full backup."""
+    """Restore a full backup with rename+rollback for safety."""
     src = Path(backup_path)
     if not src.exists():
         return False
     try:
-        # Create FULL backup of current state before restoring (not just config)
+        _validate_backup_path(src)
+        # Create FULL backup of current state before restoring
         safety = create_full_backup()
         if safety is None:
             return False  # Refuse to proceed without a safety backup
@@ -120,15 +130,30 @@ def restore_full_backup(backup_path: str) -> bool:
         json_backup = src / ".claude.json"
 
         if claude_backup.exists():
+            # Rename instead of delete — allows rollback on failure
+            temp_dir = CLAUDE_DIR.with_name(".claude.restoring")
+            if temp_dir.exists():
+                shutil.rmtree(str(temp_dir))
             if CLAUDE_DIR.exists():
-                shutil.rmtree(str(CLAUDE_DIR))
-            shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=True)
+                CLAUDE_DIR.rename(temp_dir)
+            try:
+                shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=True)
+                # Copy succeeded — remove temp
+                if temp_dir.exists():
+                    shutil.rmtree(str(temp_dir))
+            except Exception:
+                # Rollback: restore original
+                if temp_dir.exists():
+                    if CLAUDE_DIR.exists():
+                        shutil.rmtree(str(CLAUDE_DIR))
+                    temp_dir.rename(CLAUDE_DIR)
+                raise
 
         if json_backup.exists():
             shutil.copy2(str(json_backup), str(CLAUDE_JSON))
 
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 
@@ -138,10 +163,11 @@ def delete_backup(backup_path: str) -> bool:
     if not p.exists():
         return False
     try:
+        _validate_backup_path(p)
         if p.is_dir():
             shutil.rmtree(str(p))
         else:
             p.unlink()
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False

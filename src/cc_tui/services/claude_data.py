@@ -145,7 +145,7 @@ def _find_session_envs_for_dir(dir_name: str) -> list[str]:
     if SESSION_ENV_DIR.exists():
         try:
             for d in SESSION_ENV_DIR.iterdir():
-                if d.is_dir() and dir_name in d.name:
+                if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
                     envs.append(d.name)
         except (PermissionError, OSError):
             pass
