@@ -39,6 +39,8 @@ class FileHistoryPane(Container):
 
     BINDINGS = [
         ("space", "toggle_select", "Select"),
+        ("d", "trash_selected", "Trash"),
+        ("D", "trash_orphaned", "Trash Orphaned"),
     ]
 
     CSS = """
@@ -288,6 +290,12 @@ class FileHistoryPane(Container):
             self.refresh_data()
         else:
             self.app.notify(t("common.failed"), severity="error")
+
+    def action_trash_selected(self) -> None:
+        self._click_trash_selected()
+
+    def action_trash_orphaned(self) -> None:
+        self._click_trash_orphaned()
 
     def _do_trash_bulk(self, names: list[str]) -> None:
         ok, fail = trash_file_histories(names)

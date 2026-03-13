@@ -30,6 +30,13 @@ def _format_bytes(size: int) -> str:
 class BackupsPane(Container):
     """View, create, restore, and manage backups."""
 
+    BINDINGS = [
+        ("c", "config_backup", "Config Backup"),
+        ("b", "full_backup", "Full Backup"),
+        ("R", "restore_backup", "Restore"),
+        ("d", "delete_backup", "Delete"),
+    ]
+
     CSS = """
     BackupsPane {
         height: 1fr;
@@ -108,6 +115,18 @@ class BackupsPane(Container):
             row_key = list(table.rows.keys())[table.cursor_row]
             return self._backups.get(row_key.value)
         return None
+
+    def action_config_backup(self) -> None:
+        self._handle_action("config-backup")
+
+    def action_full_backup(self) -> None:
+        self._handle_action("full-backup")
+
+    def action_restore_backup(self) -> None:
+        self._handle_action("restore")
+
+    def action_delete_backup(self) -> None:
+        self._handle_action("delete")
 
     def on_click(self, event) -> None:
         """Handle action bar clicks."""

@@ -26,6 +26,12 @@ from cc_tui.services.cleaner import trash_sessions, trash_single_session_file
 
 
 class ProjectsPane(Container):
+    BINDINGS = [
+        ("d", "trash_session", "Trash Session"),
+        ("D", "trash_orphaned", "Trash Orphaned"),
+        ("x", "remove_config", "Remove Config"),
+    ]
+
     CSS = """
     ProjectsPane {
         height: 1fr;
@@ -386,6 +392,15 @@ class ProjectsPane(Container):
                     content = content[:500] + "..."
                 lines.append(f"[bold cyan]Assistant:[/]\n{content}\n")
         body.update("\n".join(lines))
+
+    def action_trash_session(self) -> None:
+        self._handle_action("trash-session")
+
+    def action_trash_orphaned(self) -> None:
+        self._handle_action("trash-orphaned-sessions")
+
+    def action_remove_config(self) -> None:
+        self._handle_action("remove-config")
 
     def on_click(self, event) -> None:
         """Handle action bar clicks."""

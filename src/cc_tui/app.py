@@ -38,6 +38,12 @@ class CCTuiApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("f1", "tab('tab-dashboard')", "Dashboard"),
+        Binding("f2", "tab('tab-projects')", "Projects"),
+        Binding("f3", "tab('tab-file-history')", "File History"),
+        Binding("f4", "tab('tab-debug-todos')", "Debug/Todos"),
+        Binding("f5", "tab('tab-migrate')", "Migrate"),
+        Binding("f6", "tab('tab-backups')", "Backups"),
     ]
 
     def __init__(self, target_path: str | None = None, **kwargs):
@@ -60,6 +66,10 @@ class CCTuiApp(App):
             with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
         yield Footer()
+
+    def action_tab(self, tab_id: str) -> None:
+        """Switch to a specific tab by ID."""
+        self.query_one("#main-tabs", TabbedContent).active = tab_id
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""

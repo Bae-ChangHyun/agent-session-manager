@@ -27,6 +27,12 @@ def _fmt_tokens(n: int) -> str:
 
 
 class DashboardPane(Container):
+    BINDINGS = [
+        ("1", "period('daily')", "Daily"),
+        ("2", "period('weekly')", "Weekly"),
+        ("3", "period('monthly')", "Monthly"),
+    ]
+
     CSS = """
     DashboardPane {
         height: 1fr;
@@ -231,6 +237,15 @@ class DashboardPane(Container):
             self._render_period_section()
         else:
             self._render_period_section()  # Show empty/loading while fetching
+            self.run_worker(lambda k=key: self._load_period(k), thread=True)
+
+    def action_period(self, key: str) -> None:
+        """Switch period via keyboard (1/2/3)."""
+        self._period = key
+        if key in self._cached_periods:
+            self._render_period_section()
+        else:
+            self._render_period_section()
             self.run_worker(lambda k=key: self._load_period(k), thread=True)
 
     def _load_period(self, key: str) -> None:

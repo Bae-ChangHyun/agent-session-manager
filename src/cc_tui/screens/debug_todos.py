@@ -35,6 +35,9 @@ class DebugTodosPane(Container):
 
     BINDINGS = [
         ("space", "toggle_select", "Select"),
+        ("d", "trash_focused", "Trash"),
+        ("D", "trash_orphaned_all", "Trash Orphaned"),
+        ("p", "prune_empty", "Prune Empty"),
     ]
 
     CSS = """
@@ -299,6 +302,40 @@ class DebugTodosPane(Container):
             table.update_cell(row_key, name_col, f"  [bold green]●[/] {row_display[name]}")
         self._render_debug_actions()
         self._render_todo_actions()
+
+    def _get_focused_kind(self) -> str | None:
+        """Return 'debug' or 'todo' based on focused table."""
+        focused = self.app.focused
+        table_id = getattr(focused, "id", "") if focused else ""
+        if table_id == "debug-table":
+            return "debug"
+        if table_id == "todo-table":
+            return "todo"
+        return None
+
+    def action_trash_focused(self) -> None:
+        """Trash selected/cursor item (d key)."""
+        kind = self._get_focused_kind()
+        if kind == "debug":
+            self._handle_action("trash-debug")
+        elif kind == "todo":
+            self._handle_action("trash-todo")
+
+    def action_trash_orphaned_all(self) -> None:
+        """Trash all orphaned items (D key)."""
+        kind = self._get_focused_kind()
+        if kind == "debug":
+            self._handle_action("trash-orphaned-debug")
+        elif kind == "todo":
+            self._handle_action("trash-orphaned-todo")
+
+    def action_prune_empty(self) -> None:
+        """Prune empty files (p key)."""
+        kind = self._get_focused_kind()
+        if kind == "debug":
+            self._handle_action("prune-debug")
+        elif kind == "todo":
+            self._handle_action("prune-todo")
 
     def _render_debug_actions(self) -> None:
         sel = len(self._selected_debug)
