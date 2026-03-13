@@ -21,6 +21,7 @@ from cc_tui.models import (
     SessionInfo,
     Stats,
     TodoEntry,
+    decode_path_hint,
     encode_path,
 )
 
@@ -368,7 +369,9 @@ def get_todos() -> list[TodoEntry]:
     try:
         for f in sorted(TODOS_DIR.iterdir()):
             size = f.stat().st_size if f.is_file() else _dir_size(f)
-            is_orphaned = f.stem not in active_session_ids if active_session_ids else False
+            # Todo filenames: {UUID}-agent-{UUID}.json → extract first UUID
+            session_id = f.stem.split("-agent-")[0] if "-agent-" in f.stem else f.stem
+            is_orphaned = session_id not in active_session_ids if active_session_ids else False
             result.append(
                 TodoEntry(name=f.name, path=str(f), size_bytes=size, is_orphaned=is_orphaned)
             )
@@ -389,6 +392,23 @@ def _get_active_session_ids() -> set[str]:
         except (PermissionError, OSError):
             pass
     return ids
+
+
+def _get_session_to_project_map() -> dict[str, str]:
+    """Build session_id → project_path mapping."""
+    mapping: dict[str, str] = {}
+    project_paths = get_project_paths()
+    encoded_to_path = {encode_path(p): p for p in project_paths}
+    if PROJECTS_DIR.exists():
+        try:
+            for d in PROJECTS_DIR.iterdir():
+                if d.is_dir():
+                    project_path = encoded_to_path.get(d.name, decode_path_hint(d.name))
+                    for jsonl in d.glob("*.jsonl"):
+                        mapping[jsonl.stem] = project_path
+        except (PermissionError, OSError):
+            pass
+    return mapping
 
 
 def get_stats() -> Stats:

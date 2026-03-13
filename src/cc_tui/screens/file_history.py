@@ -9,7 +9,7 @@ from textual.widgets import DataTable, Static
 
 from cc_tui.models import decode_path_hint, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_file_history, get_project_paths
+from cc_tui.services.claude_data import get_file_history, get_project_paths, _get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import trash_file_history, trash_file_histories
 
@@ -102,16 +102,23 @@ class FileHistoryPane(Container):
         entries = get_file_history()
         project_paths = get_project_paths()
         encoded_to_path = {encode_path(p): p for p in project_paths}
-        self.app.call_from_thread(self._update_table, entries, encoded_to_path)
+        session_to_project = _get_session_to_project_map()
+        self.app.call_from_thread(self._update_table, entries, encoded_to_path, session_to_project)
 
-    def _update_table(self, entries, encoded_to_path: dict) -> None:
+    def _update_table(self, entries, encoded_to_path: dict, session_to_project: dict = None) -> None:
         table = self.query_one("#fh-table", DataTable)
         table.clear()
         self._entries = {e.dir_name: e for e in entries}
         self._encoded_to_path = encoded_to_path
+        self._session_to_project = session_to_project or {}
         self._orphaned_fh_names = [e.dir_name for e in entries if e.is_orphaned]
         for e in entries:
-            display = _display_name(e.dir_name, encoded_to_path)
+            # For UUID entries, show project path if known
+            project = self._session_to_project.get(e.dir_name)
+            if project:
+                display = project
+            else:
+                display = _display_name(e.dir_name, encoded_to_path)
             status = t("common.orphaned") if e.is_orphaned else t("common.active")
             table.add_row(display, status, key=e.dir_name)
         self._render_actions()
@@ -140,25 +147,16 @@ class FileHistoryPane(Container):
         if event.row_key and event.row_key.value in self._entries:
             e = self._entries[event.row_key.value]
             body = self.query_one("#fh-detail-body", Static)
-            display = _display_name(e.dir_name, self._encoded_to_path)
 
             is_uuid = bool(_UUID_RE.match(e.dir_name))
+            project = self._session_to_project.get(e.dir_name)
 
             if e.is_orphaned:
-                if is_uuid:
-                    status_msg = (
-                        "[yellow bold]Orphaned (Session ID)[/]\n"
-                        "[dim]이 파일 히스토리는 세션 ID로 저장되어 있으며,\n"
-                        "해당 세션이 더이상 존재하지 않습니다.\n"
-                        "안전하게 삭제 가능합니다.[/]"
-                    )
-                else:
-                    status_msg = (
-                        "[yellow bold]Orphaned[/]\n"
-                        "[dim].claude.json에 매칭 프로젝트가 없습니다.\n"
-                        "프로젝트 폴더가 삭제/이동되었거나 config에서 제거된 경우입니다.\n"
-                        "안전하게 삭제 가능합니다.[/]"
-                    )
+                status_msg = (
+                    "[yellow bold]Orphaned[/]\n"
+                    "[dim]세션이 삭제되어 매칭되지 않습니다.\n"
+                    "안전하게 삭제 가능합니다.[/]"
+                )
             else:
                 status_msg = (
                     "[green bold]Active[/]\n"
@@ -166,12 +164,11 @@ class FileHistoryPane(Container):
                     "삭제 시 해당 프로젝트의 파일 되돌리기 기능을 사용할 수 없습니다.[/]"
                 )
 
-            body.update(
-                f"[bold]Display:[/]\n  {display}\n\n"
-                f"[bold]Raw Dir Name:[/]\n  [dim]{e.dir_name}[/]\n\n"
-                f"[bold]Type:[/] {'UUID (Session ID)' if is_uuid else 'Encoded Path'}\n\n"
-                f"[bold]Status:[/] {status_msg}"
-            )
+            detail = f"[bold]Session ID:[/]\n  [dim]{e.dir_name}[/]\n\n"
+            if project:
+                detail += f"[bold]Project:[/]\n  {project}\n\n"
+            detail += f"[bold]Status:[/] {status_msg}"
+            body.update(detail)
 
     def on_click(self, event) -> None:
         """Handle action bar clicks."""
