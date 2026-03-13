@@ -176,7 +176,7 @@ class FileHistoryPane(Container):
             table.update_cell(row_key, name_col, f"  {self._row_display[name]}")
         else:
             self._selected.add(name)
-            table.update_cell(row_key, name_col, f"[reverse] ☑ [/]{self._row_display[name]}")
+            table.update_cell(row_key, name_col, f"  [bold green]●[/] {self._row_display[name]}")
         self._render_actions()
 
     def _render_actions(self) -> None:

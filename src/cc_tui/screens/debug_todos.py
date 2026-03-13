@@ -296,7 +296,7 @@ class DebugTodosPane(Container):
             table.update_cell(row_key, name_col, f"  {row_display[name]}")
         else:
             selected.add(name)
-            table.update_cell(row_key, name_col, f"[reverse] ☑ [/]{row_display[name]}")
+            table.update_cell(row_key, name_col, f"  [bold green]●[/] {row_display[name]}")
         self._render_debug_actions()
         self._render_todo_actions()
 
