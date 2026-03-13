@@ -112,15 +112,34 @@ class FileHistoryPane(Container):
         self._encoded_to_path = encoded_to_path
         self._session_to_project = session_to_project or {}
         self._orphaned_fh_names = [e.dir_name for e in entries if e.is_orphaned]
-        # Sort: orphaned first
-        entries_sorted = sorted(entries, key=lambda e: (not e.is_orphaned, e.dir_name))
-        for e in entries_sorted:
-            project = self._session_to_project.get(e.dir_name)
-            display = project if project else _display_name(e.dir_name, encoded_to_path)
+        # Group by project
+        from collections import defaultdict
+        groups: dict[str, list] = defaultdict(list)
+        orphaned = []
+        for e in entries:
             if e.is_orphaned:
-                display = f"[yellow]{display}[/]"
-            status = t("common.orphaned") if e.is_orphaned else t("common.active")
-            table.add_row(display, status, key=e.dir_name)
+                orphaned.append(e)
+            else:
+                project = self._session_to_project.get(e.dir_name)
+                display = project if project else _display_name(e.dir_name, encoded_to_path)
+                groups[display].append(e)
+
+        if orphaned:
+            table.add_row(
+                f"[bold yellow]── Orphaned ({len(orphaned)})[/]", "",
+                key="__hdr_orphaned__",
+            )
+            for i, e in enumerate(orphaned, 1):
+                table.add_row(f"  [yellow]Orphan {i}[/]", t("common.orphaned"), key=e.dir_name)
+
+        for project in sorted(groups.keys()):
+            items = groups[project]
+            table.add_row(
+                f"[bold cyan]── {project} ({len(items)})[/]", "",
+                key=f"__hdr_{project}__",
+            )
+            for i, e in enumerate(items, 1):
+                table.add_row(f"  Session {i}", t("common.active"), key=e.dir_name)
         self._render_actions()
 
     def _render_actions(self) -> None:
@@ -144,7 +163,9 @@ class FileHistoryPane(Container):
         self.query_one("#fh-actions", Static).update("  ".join(parts))
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.row_key and event.row_key.value in self._entries:
+        if not event.row_key or event.row_key.value.startswith("__hdr_"):
+            return
+        if event.row_key.value in self._entries:
             e = self._entries[event.row_key.value]
             body = self.query_one("#fh-detail-body", Static)
 
@@ -187,6 +208,8 @@ class FileHistoryPane(Container):
         if table.cursor_row is not None and table.row_count > 0:
             row_key = list(table.rows.keys())[table.cursor_row]
             name = row_key.value
+            if name.startswith("__hdr_"):
+                return
             display = _display_name(name, self._encoded_to_path)
             self.app.push_screen(
                 ConfirmScreen(

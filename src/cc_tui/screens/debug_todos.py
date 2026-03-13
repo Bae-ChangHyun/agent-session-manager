@@ -147,42 +147,72 @@ class DebugTodosPane(Container):
             f"[bold]Todo Files[/]  [dim]({len(todos)}개, orphaned: [yellow]{orphaned_todos}[/])[/]"
         )
 
-        # Sort: orphaned first
-        debug_sorted = sorted(debug, key=lambda d: (not d.is_orphaned, d.name))
-        todo_sorted = sorted(todos, key=lambda td: (not td.is_orphaned, td.name))
-
         dt = self.query_one("#debug-table", DataTable)
         dt.clear()
-        if debug_sorted:
-            for d in debug_sorted:
-                # debug: {UUID}.txt → stem is session ID
-                session_id = d.name.split(".")[0]
-                project = self._session_to_project.get(session_id)
-                display = project if project else d.name
-                if d.is_orphaned:
-                    display = f"[yellow]{display}[/]"
-                status = t("common.orphaned") if d.is_orphaned else t("common.active")
-                dt.add_row(display, _format_bytes(d.size_bytes), status, key=d.name)
+        if debug:
+            self._populate_grouped_table(
+                dt, debug,
+                key_fn=lambda d: d.name.split(".")[0],
+            )
         else:
             dt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
 
         tt = self.query_one("#todo-table", DataTable)
         tt.clear()
-        if todo_sorted:
-            for td in todo_sorted:
-                # todo: {UUID}-agent-{UUID}.json → extract first UUID
-                session_id = td.name.split("-agent-")[0] if "-agent-" in td.name else td.name.split(".")[0]
-                project = self._session_to_project.get(session_id)
-                display = project if project else td.name
-                if td.is_orphaned:
-                    display = f"[yellow]{display}[/]"
-                status = t("common.orphaned") if td.is_orphaned else t("common.active")
-                tt.add_row(display, _format_bytes(td.size_bytes), status, key=td.name)
+        if todos:
+            self._populate_grouped_table(
+                tt, todos,
+                key_fn=lambda td: td.name.split("-agent-")[0] if "-agent-" in td.name else td.name.split(".")[0],
+            )
         else:
             tt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
 
         self._render_debug_actions()
         self._render_todo_actions()
+
+    def _populate_grouped_table(self, table: DataTable, entries, key_fn) -> None:
+        """Populate a DataTable with entries grouped by project."""
+        from collections import defaultdict
+        groups: dict[str, list] = defaultdict(list)
+        orphaned = []
+        for e in entries:
+            if e.is_orphaned:
+                orphaned.append(e)
+            else:
+                session_id = key_fn(e)
+                project = self._session_to_project.get(session_id, session_id)
+                groups[project].append(e)
+
+        # Orphaned group first
+        if orphaned:
+            table.add_row(
+                f"[bold yellow]── Orphaned ({len(orphaned)})[/]", "", "",
+                key="__hdr_orphaned__",
+            )
+            for i, e in enumerate(orphaned, 1):
+                table.add_row(
+                    f"  [yellow]Orphan {i}[/]",
+                    _format_bytes(e.size_bytes),
+                    t("common.orphaned"),
+                    key=e.name,
+                )
+
+        # Active groups by project
+        for project in sorted(groups.keys()):
+            items = groups[project]
+            total_size = sum(e.size_bytes for e in items)
+            table.add_row(
+                f"[bold cyan]── {project} ({len(items)})[/]",
+                f"[dim]{_format_bytes(total_size)}[/]", "",
+                key=f"__hdr_{project}__",
+            )
+            for i, e in enumerate(items, 1):
+                table.add_row(
+                    f"  Session {i}",
+                    _format_bytes(e.size_bytes),
+                    t("common.active"),
+                    key=e.name,
+                )
 
     def _build_action_bar(self, actions):
         """Build Rich markup action bar and click map.
@@ -287,6 +317,8 @@ class DebugTodosPane(Container):
             if table.cursor_row is not None and table.row_count > 0:
                 row_key = list(table.rows.keys())[table.cursor_row]
                 name = row_key.value
+                if name.startswith("__hdr_"):
+                    return
                 self.app.push_screen(
                     ConfirmScreen(t("dt.confirm_debug", name=name)),
                     callback=lambda ok, n=name: self._trash_debug(n) if ok else None,
@@ -296,6 +328,8 @@ class DebugTodosPane(Container):
             if table.cursor_row is not None and table.row_count > 0:
                 row_key = list(table.rows.keys())[table.cursor_row]
                 name = row_key.value
+                if name.startswith("__hdr_"):
+                    return
                 self.app.push_screen(
                     ConfirmScreen(t("dt.confirm_todo", name=name)),
                     callback=lambda ok, n=name: self._trash_todo(n) if ok else None,
