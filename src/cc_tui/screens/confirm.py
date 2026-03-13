@@ -1,9 +1,10 @@
 """Confirmation dialog modal screen."""
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
-from textual.containers import Grid
+from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label
+from textual.widgets import Static
 
 from cc_tui.i18n import t
 
@@ -16,9 +17,6 @@ class ConfirmScreen(ModalScreen[bool]):
         align: center middle;
     }
     #confirm-dialog {
-        grid-size: 2;
-        grid-gutter: 1 2;
-        grid-rows: auto auto;
         padding: 1 2;
         width: 60;
         height: auto;
@@ -26,28 +24,58 @@ class ConfirmScreen(ModalScreen[bool]):
         background: $surface;
     }
     #confirm-question {
-        column-span: 2;
         height: auto;
         width: 1fr;
         content-align: center middle;
         margin-bottom: 1;
     }
-    Button {
-        width: 100%;
+    #confirm-actions {
+        height: 1;
+        content-align: center middle;
     }
     """
+
+    BINDINGS = [
+        ("y", "confirm", "Yes"),
+        ("n", "cancel", "No"),
+        ("escape", "cancel", "Cancel"),
+    ]
 
     def __init__(self, message: str, **kwargs):
         super().__init__(**kwargs)
         self.message = message
 
     def compose(self) -> ComposeResult:
-        yield Grid(
-            Label(self.message, id="confirm-question"),
-            Button(t("confirm.yes"), variant="error", id="confirm-yes"),
-            Button(t("confirm.no"), variant="primary", id="confirm-no"),
-            id="confirm-dialog",
+        yes_label = t("confirm.yes")
+        no_label = t("confirm.no")
+        yes_text = f" {yes_label} "
+        no_text = f" {no_label} "
+        yes_w = cell_len(yes_text)
+        no_w = cell_len(no_text)
+        gap = 4
+        self._action_map = [
+            (0, yes_w, "yes"),
+            (yes_w + gap, yes_w + gap + no_w, "no"),
+        ]
+        bar = (
+            f"[bold white on #ba3c5b]{yes_text}[/]"
+            f"    "
+            f"[bold white on #555555]{no_text}[/]"
         )
+        with Vertical(id="confirm-dialog"):
+            yield Static(self.message, id="confirm-question")
+            yield Static(bar, id="confirm-actions")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "confirm-yes")
+    def on_click(self, event) -> None:
+        if getattr(event.widget, "id", "") != "confirm-actions":
+            return
+        for start, end, action in self._action_map:
+            if start <= event.x < end:
+                self.dismiss(action == "yes")
+                break
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
