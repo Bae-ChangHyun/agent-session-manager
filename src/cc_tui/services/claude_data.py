@@ -415,6 +415,118 @@ def get_stats() -> Stats:
     )
 
 
+def get_usage_data() -> dict:
+    """Get usage/cost data from .claude.json and history.jsonl."""
+    from collections import defaultdict
+    from datetime import datetime
+
+    data = load_claude_json()
+    projects = data.get("projects", {})
+
+    # Per-project costs
+    project_costs = []
+    model_totals: dict[str, dict] = {}
+    total_cost = 0.0
+
+    for path_str, config in projects.items():
+        cost = config.get("lastCost") or 0
+        total_cost += cost
+        if cost > 0:
+            project_costs.append({
+                "path": path_str,
+                "name": path_str.rstrip("/").split("/")[-1],
+                "cost": cost,
+                "duration": config.get("lastDuration") or 0,
+            })
+        # Model usage aggregation
+        usage = config.get("lastModelUsage", {})
+        for model, stats in usage.items():
+            if model not in model_totals:
+                model_totals[model] = {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0}
+            for k in model_totals[model]:
+                model_totals[model][k] += stats.get(k, 0)
+
+    project_costs.sort(key=lambda x: x["cost"], reverse=True)
+
+    # Daily sessions from history.jsonl
+    sessions_by_day: dict[str, int] = defaultdict(int)
+    history_path = CLAUDE_DIR / "history.jsonl"
+    if history_path.exists():
+        try:
+            with open(history_path) as f:
+                for line in f:
+                    try:
+                        d = json.loads(line)
+                        ts = d.get("timestamp", 0)
+                        if ts:
+                            dt = datetime.fromtimestamp(ts / 1000)
+                            sessions_by_day[dt.strftime("%Y-%m-%d")] += 1
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+        except OSError:
+            pass
+
+    return {
+        "total_cost": total_cost,
+        "project_costs": project_costs[:15],
+        "model_totals": model_totals,
+        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:14]),
+        "total_sessions_ever": sum(sessions_by_day.values()),
+        "first_use": data.get("firstStartTime", ""),
+        "num_startups": data.get("numStartups", 0),
+    }
+
+
+def get_project_sessions(project_path: str) -> list[SessionDetail]:
+    """Get sessions specifically for one project."""
+    encoded = encode_path(project_path)
+    project_dir = PROJECTS_DIR / encoded
+    if not project_dir.exists():
+        return []
+
+    result = []
+    for jsonl in sorted(project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            stat = jsonl.stat()
+            first_prompt = ""
+            session_id = jsonl.stem
+            with open(jsonl) as f:
+                for line in f:
+                    try:
+                        msg = json.loads(line)
+                        if msg.get("type") == "user" and not msg.get("isMeta"):
+                            content = msg.get("message", {}).get("content", "")
+                            if isinstance(content, str):
+                                # Skip XML/command messages
+                                if not content.startswith("<"):
+                                    first_prompt = content[:120]
+                                    break
+                            elif isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        if not text.startswith("<"):
+                                            first_prompt = text[:120]
+                                            break
+                                if first_prompt:
+                                    break
+                    except json.JSONDecodeError:
+                        continue
+            result.append(
+                SessionDetail(
+                    session_id=session_id,
+                    summary=first_prompt or f"(session {session_id[:8]})",
+                    last_modified=stat.st_mtime,
+                    file_size=stat.st_size,
+                    first_prompt=first_prompt,
+                    project_dir=encoded,
+                )
+            )
+        except OSError:
+            continue
+    return result
+
+
 def remove_project_from_json(project_path: str) -> bool:
     """Remove a project entry from .claude.json."""
     data = load_claude_json()

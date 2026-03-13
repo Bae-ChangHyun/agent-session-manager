@@ -5,11 +5,11 @@ from textual.containers import Container, Vertical
 from textual.widgets import Button, DataTable, Static
 
 from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_file_history, get_sessions
-from cc_tui.services.cleaner import trash_file_history, trash_session
+from cc_tui.services.claude_data import get_debug_files, get_file_history, get_sessions, get_todos
+from cc_tui.services.cleaner import trash_debug_file, trash_file_history, trash_session, trash_todo_file
 
 
-def _format_bytes(size: int) -> str:
+def _fmt(size: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024:
             return f"{size:.1f} {unit}"
@@ -18,8 +18,6 @@ def _format_bytes(size: int) -> str:
 
 
 class OrphanedPane(Container):
-    """View and clean orphaned data."""
-
     CSS = """
     OrphanedPane {
         height: 1fr;
@@ -32,40 +30,63 @@ class OrphanedPane(Container):
     }
     .orphaned-section {
         height: 1fr;
+        min-height: 8;
         margin-bottom: 1;
     }
-    .section-title {
+    .section-header {
+        height: auto;
+        margin-bottom: 0;
+    }
+    .section-label {
         text-style: bold;
-        margin-bottom: 1;
+        color: $warning;
+    }
+    .section-desc {
+        color: $text-muted;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "[bold]Orphaned[/] - .claude.json에 매칭 프로젝트가 없는 고아 데이터\n"
-            "[dim]프로젝트를 삭제/이동한 뒤 남은 잔여 데이터입니다. 정리해도 안전합니다.[/]",
+            "[bold]Orphaned[/] - .claude.json에 매칭 프로젝트가 없는 잔여 데이터\n"
+            "[dim]프로젝트를 삭제/이동한 뒤 남은 데이터입니다. 모두 휴지통으로 이동되며 복구 가능합니다.[/]",
             id="orphaned-info",
         )
+
+        # Section 1: Orphaned Sessions
         with Vertical(classes="orphaned-section"):
-            yield Static("Orphaned Sessions", classes="section-title")
+            yield Static("", classes="section-header", id="session-header")
             yield Button("Trash All Orphaned Sessions", variant="error", id="btn-trash-orphaned-sessions")
             yield DataTable(id="orphaned-sessions-table")
+
+        # Section 2: Orphaned File History
         with Vertical(classes="orphaned-section"):
-            yield Static("Orphaned File History", classes="section-title")
+            yield Static("", classes="section-header", id="fh-header")
             yield Button("Trash All Orphaned File History", variant="error", id="btn-trash-orphaned-fh")
             yield DataTable(id="orphaned-fh-table")
 
+        # Section 3: Orphaned Debug
+        with Vertical(classes="orphaned-section"):
+            yield Static("", classes="section-header", id="debug-header")
+            yield Button("Trash All Orphaned Debug", variant="error", id="btn-trash-orphaned-debug")
+            yield DataTable(id="orphaned-debug-table")
+
+        # Section 4: Orphaned Todos
+        with Vertical(classes="orphaned-section"):
+            yield Static("", classes="section-header", id="todo-header")
+            yield Button("Trash All Orphaned Todos", variant="error", id="btn-trash-orphaned-todos")
+            yield DataTable(id="orphaned-todos-table")
+
     def on_mount(self) -> None:
-        st = self.query_one("#orphaned-sessions-table", DataTable)
-        st.cursor_type = "row"
-        st.zebra_stripes = True
-        st.add_columns("Directory", "Size", "Files")
+        for tid in ("orphaned-sessions-table", "orphaned-fh-table", "orphaned-debug-table", "orphaned-todos-table"):
+            t = self.query_one(f"#{tid}", DataTable)
+            t.cursor_type = "row"
+            t.zebra_stripes = True
 
-        ft = self.query_one("#orphaned-fh-table", DataTable)
-        ft.cursor_type = "row"
-        ft.zebra_stripes = True
-        ft.add_columns("Directory", "Size")
-
+        self.query_one("#orphaned-sessions-table", DataTable).add_columns("Session Directory", "Files")
+        self.query_one("#orphaned-fh-table", DataTable).add_columns("File History Directory")
+        self.query_one("#orphaned-debug-table", DataTable).add_columns("Debug File", "Size")
+        self.query_one("#orphaned-todos-table", DataTable).add_columns("Todo File", "Size")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -74,57 +95,86 @@ class OrphanedPane(Container):
     def _load(self) -> None:
         sessions = [s for s in get_sessions() if s.is_orphaned]
         fh = [f for f in get_file_history() if f.is_orphaned]
-        self.app.call_from_thread(self._update, sessions, fh)
+        debug = [d for d in get_debug_files() if d.is_orphaned]
+        todos = [t for t in get_todos() if t.is_orphaned]
+        self.app.call_from_thread(self._update, sessions, fh, debug, todos)
 
-    def _update(self, sessions, fh) -> None:
+    def _update(self, sessions, fh, debug, todos) -> None:
+        self._orphaned_sessions = sessions
+        self._orphaned_fh = fh
+        self._orphaned_debug = debug
+        self._orphaned_todos = todos
+
+        # Update headers with counts
+        self.query_one("#session-header", Static).update(
+            f"[bold yellow]Orphaned Sessions[/]  [dim](.claude.json에 없는 세션 디렉토리)[/]  —  [bold]{len(sessions)}[/]개"
+        )
+        self.query_one("#fh-header", Static).update(
+            f"[bold yellow]Orphaned File History[/]  [dim](프로젝트 없는 파일 버전 히스토리)[/]  —  [bold]{len(fh)}[/]개"
+        )
+        self.query_one("#debug-header", Static).update(
+            f"[bold yellow]Orphaned Debug[/]  [dim](세션 없는 디버그 로그)[/]  —  [bold]{len(debug)}[/]개"
+        )
+        self.query_one("#todo-header", Static).update(
+            f"[bold yellow]Orphaned Todos[/]  [dim](세션 없는 할일 메모)[/]  —  [bold]{len(todos)}[/]개"
+        )
+
+        # Populate tables
         st = self.query_one("#orphaned-sessions-table", DataTable)
         st.clear()
-        self._orphaned_sessions = sessions
         for s in sessions:
-            st.add_row(s.dir_name, _format_bytes(s.size_bytes), str(s.file_count), key=s.dir_name)
+            st.add_row(s.dir_name, str(s.file_count), key=s.dir_name)
 
         ft = self.query_one("#orphaned-fh-table", DataTable)
         ft.clear()
-        self._orphaned_fh = fh
         for f in fh:
-            ft.add_row(f.dir_name, _format_bytes(f.size_bytes), key=f.dir_name)
+            ft.add_row(f.dir_name, key=f.dir_name)
+
+        dt = self.query_one("#orphaned-debug-table", DataTable)
+        dt.clear()
+        for d in debug[:100]:  # Limit display
+            dt.add_row(d.name, _fmt(d.size_bytes), key=d.name)
+
+        tt = self.query_one("#orphaned-todos-table", DataTable)
+        tt.clear()
+        for t in todos[:100]:
+            tt.add_row(t.name, _fmt(t.size_bytes), key=t.name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-trash-orphaned-sessions":
-            count = len(getattr(self, "_orphaned_sessions", []))
+        handlers = {
+            "btn-trash-orphaned-sessions": (self._orphaned_sessions, "sessions", self._trash_sessions),
+            "btn-trash-orphaned-fh": (self._orphaned_fh, "file history", self._trash_fh),
+            "btn-trash-orphaned-debug": (self._orphaned_debug, "debug files", self._trash_debug),
+            "btn-trash-orphaned-todos": (self._orphaned_todos, "todo files", self._trash_todos),
+        }
+        handler = handlers.get(event.button.id)
+        if handler:
+            items, label, action = handler
+            count = len(items)
             if count == 0:
-                self.app.notify("No orphaned sessions")
+                self.app.notify(f"No orphaned {label}")
                 return
             self.app.push_screen(
-                ConfirmScreen(f"Move {count} orphaned sessions to trash?"),
-                callback=lambda ok: self._do_trash_sessions() if ok else None,
-            )
-        elif event.button.id == "btn-trash-orphaned-fh":
-            count = len(getattr(self, "_orphaned_fh", []))
-            if count == 0:
-                self.app.notify("No orphaned file history")
-                return
-            self.app.push_screen(
-                ConfirmScreen(f"Move {count} orphaned file history entries to trash?"),
-                callback=lambda ok: self._do_trash_fh() if ok else None,
+                ConfirmScreen(f"Move {count} orphaned {label} to trash?"),
+                callback=lambda ok: action() if ok else None,
             )
 
-    def _do_trash_sessions(self) -> None:
-        ok, fail = 0, 0
-        for s in self._orphaned_sessions:
-            if trash_session(s.dir_name):
-                ok += 1
-            else:
-                fail += 1
-        self.app.notify(f"Trashed {ok} sessions" + (f", {fail} failed" if fail else ""))
+    def _trash_sessions(self) -> None:
+        ok = sum(1 for s in self._orphaned_sessions if trash_session(s.dir_name))
+        self.app.notify(f"Trashed {ok}/{len(self._orphaned_sessions)} sessions")
         self.refresh_data()
 
-    def _do_trash_fh(self) -> None:
-        ok, fail = 0, 0
-        for f in self._orphaned_fh:
-            if trash_file_history(f.dir_name):
-                ok += 1
-            else:
-                fail += 1
-        self.app.notify(f"Trashed {ok} entries" + (f", {fail} failed" if fail else ""))
+    def _trash_fh(self) -> None:
+        ok = sum(1 for f in self._orphaned_fh if trash_file_history(f.dir_name))
+        self.app.notify(f"Trashed {ok}/{len(self._orphaned_fh)} file history")
+        self.refresh_data()
+
+    def _trash_debug(self) -> None:
+        ok = sum(1 for d in self._orphaned_debug if trash_debug_file(d.name))
+        self.app.notify(f"Trashed {ok}/{len(self._orphaned_debug)} debug files")
+        self.refresh_data()
+
+    def _trash_todos(self) -> None:
+        ok = sum(1 for t in self._orphaned_todos if trash_todo_file(t.name))
+        self.app.notify(f"Trashed {ok}/{len(self._orphaned_todos)} todos")
         self.refresh_data()

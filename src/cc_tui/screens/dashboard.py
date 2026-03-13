@@ -1,13 +1,17 @@
-"""Dashboard screen showing overall statistics and guide."""
+"""Dashboard screen - usage stats and overview."""
+
+from __future__ import annotations
+
+from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
-from cc_tui.services.claude_data import get_stats
+from cc_tui.services.claude_data import get_stats, get_usage_data
 
 
-def _format_bytes(size: int) -> str:
+def _fmt(size: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024:
             return f"{size:.1f} {unit}"
@@ -15,149 +19,132 @@ def _format_bytes(size: int) -> str:
     return f"{size:.1f} TB"
 
 
-class StatCard(Static):
-    CSS = """
-    StatCard {
-        width: 1fr;
-        height: 5;
-        border: round $primary;
-        padding: 0 2;
-        content-align: center middle;
-        text-align: center;
-        margin: 0 1;
-    }
-    StatCard.warning {
-        border: round $error;
-        color: $error;
-    }
-    """
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
 
 
 class DashboardPane(Container):
     CSS = """
     DashboardPane {
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
     }
-    .dash-section-title {
+    #dash-scroll {
+        height: 1fr;
+    }
+    .dash-title {
         text-style: bold;
-        margin: 1 0 0 0;
         color: $accent;
+        margin: 1 0 0 0;
     }
-    .stat-row {
-        height: auto;
+    .dash-divider {
+        height: 1;
         margin: 1 0;
+        color: $primary-background;
     }
-    #guide-section {
+    .dash-content {
         height: auto;
-        margin-top: 1;
-        padding: 1;
-        border: round $primary-background;
+        margin: 0 0 0 2;
     }
-    .guide-item {
+    .dash-table {
         height: auto;
-        margin: 0 0 1 0;
+        margin: 0 0 0 2;
+    }
+    .bar-container {
+        height: auto;
+        margin: 0 0 0 2;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Claude Code Data Overview[/]", classes="dash-section-title")
-        yield Static("Loading...", id="loading-msg")
-        yield Horizontal(id="row-counts", classes="stat-row")
-        yield Static("[bold]Orphaned (정리 가능)[/]", classes="dash-section-title")
-        yield Horizontal(id="row-orphaned", classes="stat-row")
-        yield Static("[bold]Disk Usage[/]", classes="dash-section-title")
-        yield Horizontal(id="row-size", classes="stat-row")
-
-        with VerticalScroll(id="guide-section"):
-            yield Static("[bold underline]탭 가이드[/]\n", classes="guide-item")
-            yield Static(
-                "[bold cyan]Projects[/]  .claude.json에 등록된 프로젝트 목록\n"
-                "  Claude Code를 사용한 모든 프로젝트 경로와 설정이 여기 저장됩니다.\n"
-                "  [green]Found[/] = 프로젝트 폴더가 디스크에 존재  "
-                "[red]Missing[/] = 폴더가 삭제/이동됨 (설정만 남음)\n"
-                "  트리 구조로 상위 폴더별 그룹핑됩니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]Sessions[/]  실제 대화 기록 파일 (JSONL)\n"
-                "  ~/.claude/projects/ 아래에 프로젝트별로 세션 파일이 저장됩니다.\n"
-                "  세션을 선택하면 대화 내용을 미리볼 수 있습니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]File History[/]  Claude가 편집한 파일의 버전 히스토리\n"
-                "  되돌리기용 스냅샷입니다. 시간이 지나면 쌓이므로 정리해도 됩니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]Orphaned[/]  .claude.json에 매칭 프로젝트가 없는 고아 데이터\n"
-                "  프로젝트를 삭제/이동한 뒤 남은 잔여 데이터입니다. 정리해도 안전합니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]Debug/Todos[/]  세션별 디버그 로그와 할일 메모\n"
-                "  임시 데이터이므로 디스크 절약을 위해 정리 가능합니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]Migrate[/]  세션 마이그레이션 (복사 기반)\n"
-                "  프로젝트 경로를 변경했을 때, 기존 세션을 새 경로로 옮깁니다.",
-                classes="guide-item",
-            )
-            yield Static(
-                "[bold cyan]Backups[/]  설정/전체 백업 생성 및 복원\n"
-                "  작업 전 백업을 만들어두면 실수해도 복구할 수 있습니다.",
-                classes="guide-item",
-            )
+        with VerticalScroll(id="dash-scroll"):
+            yield Static("Loading...", id="dash-loading")
 
     def on_mount(self) -> None:
         self.refresh_data()
 
     def refresh_data(self) -> None:
-        self.run_worker(self._load_stats, thread=True)
+        self.run_worker(self._load, thread=True)
 
-    def _load_stats(self) -> None:
+    def _load(self) -> None:
         stats = get_stats()
-        self.app.call_from_thread(self._update_display, stats)
+        usage = get_usage_data()
+        self.app.call_from_thread(self._build_dashboard, stats, usage)
 
-    def _update_display(self, stats) -> None:
-        loading = self.query_one("#loading-msg", Static)
-        loading.display = False
+    def _build_dashboard(self, stats, usage) -> None:
+        scroll = self.query_one("#dash-scroll", VerticalScroll)
+        scroll.remove_children()
 
-        row = self.query_one("#row-counts")
-        row.remove_children()
-        row.mount(StatCard(f"Projects\n[bold]{stats.total_projects}[/]"))
-        row.mount(StatCard(f"Sessions\n[bold]{stats.total_sessions}[/]"))
-        row.mount(StatCard(f"File History\n[bold]{stats.total_file_history}[/]"))
-        row.mount(StatCard(f"Debug\n[bold]{stats.total_debug}[/]"))
-        row.mount(StatCard(f"Todos\n[bold]{stats.total_todos}[/]"))
+        # === Header ===
+        scroll.mount(Static(
+            f"[bold]CC-TUI[/]  Claude Code Session Manager\n"
+            f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
+            f"{usage['num_startups']} startups  |  "
+            f"{usage['total_sessions_ever']} total sessions[/]"
+        ))
+        scroll.mount(Static("─" * 70, classes="dash-divider"))
 
-        row_o = self.query_one("#row-orphaned")
-        row_o.remove_children()
-        total_orphaned = stats.orphaned_sessions + stats.orphaned_file_history + stats.orphaned_debug + stats.orphaned_todos
-        row_o.mount(StatCard(
-            f"Sessions\n[bold]{stats.orphaned_sessions}[/]",
-            classes="warning" if stats.orphaned_sessions else "",
-        ))
-        row_o.mount(StatCard(
-            f"File History\n[bold]{stats.orphaned_file_history}[/]",
-            classes="warning" if stats.orphaned_file_history else "",
-        ))
-        row_o.mount(StatCard(
-            f"Debug\n[bold]{stats.orphaned_debug}[/]",
-            classes="warning" if stats.orphaned_debug else "",
-        ))
-        row_o.mount(StatCard(
-            f"Todos\n[bold]{stats.orphaned_todos}[/]",
-            classes="warning" if stats.orphaned_todos else "",
-        ))
-        row_o.mount(StatCard(
-            f"Total\n[bold]{total_orphaned}[/]",
-            classes="warning" if total_orphaned else "",
+        # === Cost Summary ===
+        scroll.mount(Static("[bold]  Total Cost[/]", classes="dash-title"))
+        scroll.mount(Static(
+            f"  [bold green]${usage['total_cost']:.2f}[/]",
+            classes="dash-content",
         ))
 
-        row_s = self.query_one("#row-size")
-        row_s.remove_children()
-        row_s.mount(StatCard(f".claude/\n[bold]{_format_bytes(stats.claude_dir_size)}[/]"))
-        row_s.mount(StatCard(f"projects/\n[bold]{_format_bytes(stats.projects_dir_size)}[/]"))
+        # === Model Usage ===
+        scroll.mount(Static("[bold]  Model Usage[/]", classes="dash-title"))
+        model_lines = []
+        for model in sorted(usage["model_totals"].keys()):
+            t = usage["model_totals"][model]
+            short_name = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
+            model_lines.append(
+                f"  [cyan]{short_name:20s}[/]  "
+                f"${t['costUSD']:>8.2f}  "
+                f"In:{_fmt_tokens(t['inputTokens']):>6s}  "
+                f"Out:{_fmt_tokens(t['outputTokens']):>6s}  "
+                f"Cache:{_fmt_tokens(t['cacheReadInputTokens']):>7s}"
+            )
+        scroll.mount(Static("\n".join(model_lines), classes="dash-table"))
+        scroll.mount(Static("─" * 70, classes="dash-divider"))
+
+        # === Recent Activity (bar chart) ===
+        scroll.mount(Static("[bold]  Recent Activity[/]  (sessions/day)", classes="dash-title"))
+        days = usage["sessions_by_day"]
+        if days:
+            max_count = max(days.values()) if days else 1
+            bar_lines = []
+            for day, count in list(days.items())[:10]:
+                bar_len = int(count / max_count * 30) if max_count > 0 else 0
+                bar = "█" * bar_len
+                weekday = datetime.strptime(day, "%Y-%m-%d").strftime("%a")
+                bar_lines.append(f"  {day} {weekday}  {bar} {count}")
+            scroll.mount(Static("\n".join(bar_lines), classes="bar-container"))
+        scroll.mount(Static("─" * 70, classes="dash-divider"))
+
+        # === Top Projects by Cost ===
+        scroll.mount(Static("[bold]  Top Projects by Cost[/]", classes="dash-title"))
+        cost_lines = []
+        for i, pc in enumerate(usage["project_costs"][:10], 1):
+            bar_len = int(pc["cost"] / usage["project_costs"][0]["cost"] * 20) if usage["project_costs"] else 0
+            bar = "▓" * bar_len
+            cost_lines.append(f"  {i:2d}. ${pc['cost']:>8.2f}  {bar}  {pc['name']}")
+        scroll.mount(Static("\n".join(cost_lines), classes="dash-table"))
+        scroll.mount(Static("─" * 70, classes="dash-divider"))
+
+        # === Data Overview ===
+        scroll.mount(Static("[bold]  Data Overview[/]", classes="dash-title"))
+        overview = (
+            f"  {'Projects':20s} {stats.total_projects:>6d}\n"
+            f"  {'Session Dirs':20s} {stats.total_sessions:>6d}    [dim](orphaned: {stats.orphaned_sessions})[/]\n"
+            f"  {'File History':20s} {stats.total_file_history:>6d}    [dim](orphaned: {stats.orphaned_file_history})[/]\n"
+            f"  {'Debug Files':20s} {stats.total_debug:>6d}    [dim](orphaned: {stats.orphaned_debug})[/]\n"
+            f"  {'Todos':20s} {stats.total_todos:>6d}    [dim](orphaned: {stats.orphaned_todos})[/]\n"
+            f"\n"
+            f"  {'Disk: .claude/':20s} {_fmt(stats.claude_dir_size):>10s}\n"
+            f"  {'Disk: projects/':20s} {_fmt(stats.projects_dir_size):>10s}"
+        )
+        scroll.mount(Static(overview, classes="dash-table"))
