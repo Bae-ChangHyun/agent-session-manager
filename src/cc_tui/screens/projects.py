@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import PurePosixPath
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Static, Tree
+from textual.widgets import Static, Tree
 
 from cc_tui.models import PROJECTS_DIR, ProjectInfo, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
@@ -46,8 +47,8 @@ class ProjectsPane(Container):
     #project-tree {
         height: 1fr;
     }
-    #btn-trash-orphaned-sessions {
-        width: auto;
+    #tree-actions {
+        height: 1;
         margin-top: 1;
     }
     #project-detail-panel {
@@ -64,14 +65,9 @@ class ProjectsPane(Container):
         text-style: bold;
         margin-bottom: 1;
     }
-    #detail-buttons {
-        dock: bottom;
-        height: auto;
+    #detail-actions {
+        height: 1;
         margin-top: 1;
-    }
-    #detail-buttons Button {
-        width: auto;
-        margin-right: 1;
     }
     """
 
@@ -83,16 +79,14 @@ class ProjectsPane(Container):
         with Horizontal(id="projects-layout"):
             with Vertical(id="projects-tree-panel"):
                 yield Tree("Projects", id="project-tree")
-                yield Button("", variant="primary", id="btn-trash-orphaned-sessions")
+                yield Static("", id="tree-actions")
             with Vertical(id="project-detail-panel"):
                 yield Static("", id="project-detail-header")
                 yield VerticalScroll(
                     Static(t("proj.select_hint"), id="project-detail-body"),
                     id="detail-scroll",
                 )
-                with Horizontal(id="detail-buttons"):
-                    yield Button(t("proj.btn_trash_session"), variant="primary", id="btn-trash-session", disabled=True)
-                    yield Button(t("proj.btn_remove_config"), variant="primary", id="btn-remove-config", disabled=True)
+                yield Static("", id="detail-actions")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -100,14 +94,12 @@ class ProjectsPane(Container):
         self._selected_session: tuple[str, str | None] | None = None
         self._selected_session_node = None
         self._project_map: dict[str, ProjectInfo] = {}
+        self._tree_action_map = []
+        self._detail_action_map = []
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
         tree.show_root = False
-        # Hide buttons initially
-        self.query_one("#btn-trash-session", Button).display = False
-        self.query_one("#btn-remove-config", Button).display = False
-        self.query_one("#btn-trash-orphaned-sessions", Button).display = False
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -124,12 +116,9 @@ class ProjectsPane(Container):
         self._project_map = {p.path: p for p in projects}
         all_paths = {p.path for p in projects}
 
-        # Update orphaned sessions button
+        # Update orphaned sessions action bar
         self._orphaned_session_dirs = [s.dir_name for s in (orphaned_sessions or [])]
-        btn = self.query_one("#btn-trash-orphaned-sessions", Button)
-        count = len(self._orphaned_session_dirs)
-        btn.label = t("proj.btn_trash_orphaned", count=count)
-        btn.display = count > 0
+        self._render_tree_actions()
 
         # Build a proper tree structure by inserting each path into a nested dict
         root_nodes: dict = {}  # nested dict structure
@@ -146,6 +135,46 @@ class ProjectsPane(Container):
 
         # Render the tree, collapsing long chains of single-child dirs
         self._render_tree_nodes(tree.root, root_nodes, "", all_paths)
+
+    def _render_tree_actions(self) -> None:
+        """Render orphaned sessions action bar below tree."""
+        count = len(self._orphaned_session_dirs)
+        if count > 0:
+            label = t("proj.btn_trash_orphaned", count=count)
+            text = f" {label} "
+            width = cell_len(text)
+            self._tree_action_map = [(0, width, "trash-orphaned-sessions")]
+            self.query_one("#tree-actions", Static).update(
+                f"[bold white on #ba3c5b]{text}[/]"
+            )
+        else:
+            self._tree_action_map = []
+            self.query_one("#tree-actions", Static).update("")
+
+    def _render_detail_actions(self, show_trash_session=False, show_remove_config=False) -> None:
+        """Render detail panel action bar."""
+        actions = []
+        if show_trash_session:
+            actions.append(("trash-session", t("proj.btn_trash_session"), "#e8890c"))
+        if show_remove_config:
+            actions.append(("remove-config", t("proj.btn_remove_config"), "#ba3c5b"))
+        if not actions:
+            self._detail_action_map = []
+            self.query_one("#detail-actions", Static).update("")
+            return
+        parts = []
+        click_map = []
+        x = 0
+        for i, (action_id, label, color) in enumerate(actions):
+            text = f" {label} "
+            width = cell_len(text)
+            click_map.append((x, x + width, action_id))
+            parts.append(f"[bold white on {color}]{text}[/]")
+            x += width
+            if i < len(actions) - 1:
+                x += 2
+        self._detail_action_map = click_map
+        self.query_one("#detail-actions", Static).update("  ".join(parts))
 
     def _render_tree_nodes(self, parent_node, node_dict: dict, current_path: str, all_paths: set):
         """Recursively render tree, collapsing single-child intermediate directories."""
@@ -265,9 +294,6 @@ class ProjectsPane(Container):
             return
         kind = node_data[0]
 
-        btn_trash = self.query_one("#btn-trash-session", Button)
-        btn_config = self.query_one("#btn-remove-config", Button)
-
         if kind == "project":
             path = node_data[1]
             self._selected_project_path = path
@@ -276,10 +302,10 @@ class ProjectsPane(Container):
             encoded = encode_path(path)
             session_dir = PROJECTS_DIR / encoded
             session_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
-            # 세션 삭제 숨김, config 제거는 세션 0개일때만 표시
-            btn_trash.display = False
-            btn_config.display = session_count == 0
-            btn_config.disabled = False
+            self._render_detail_actions(
+                show_trash_session=False,
+                show_remove_config=(session_count == 0),
+            )
             p = self._project_map.get(path)
             if p:
                 self._show_project_detail(p, session_count)
@@ -288,10 +314,10 @@ class ProjectsPane(Container):
             project_dir = node_data[2] if len(node_data) > 2 else None
             self._selected_session = (session_id, project_dir)
             self._selected_session_node = event.node
-            # 세션 삭제 표시, config 제거 숨김
-            btn_trash.display = True
-            btn_trash.disabled = False
-            btn_config.display = False
+            self._render_detail_actions(
+                show_trash_session=True,
+                show_remove_config=False,
+            )
             self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
 
     def _show_project_detail(self, p: ProjectInfo, session_count: int = 0) -> None:
@@ -361,8 +387,22 @@ class ProjectsPane(Container):
                 lines.append(f"[bold cyan]Assistant:[/]\n{content}\n")
         body.update("\n".join(lines))
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-trash-session":
+    def on_click(self, event) -> None:
+        """Handle action bar clicks."""
+        widget_id = getattr(event.widget, "id", "")
+        if widget_id == "tree-actions":
+            for start, end, action_id in self._tree_action_map:
+                if start <= event.x < end:
+                    self._handle_action(action_id)
+                    break
+        elif widget_id == "detail-actions":
+            for start, end, action_id in self._detail_action_map:
+                if start <= event.x < end:
+                    self._handle_action(action_id)
+                    break
+
+    def _handle_action(self, action_id: str) -> None:
+        if action_id == "trash-session":
             session = getattr(self, "_selected_session", None)
             if not session:
                 return
@@ -373,8 +413,7 @@ class ProjectsPane(Container):
                 ),
                 callback=lambda ok: self._do_trash_session() if ok else None,
             )
-
-        elif event.button.id == "btn-remove-config":
+        elif action_id == "remove-config":
             path = getattr(self, "_selected_project_path", None)
             if not path:
                 return
@@ -384,7 +423,7 @@ class ProjectsPane(Container):
                 ),
                 callback=lambda ok: self._do_remove_config(path) if ok else None,
             )
-        elif event.button.id == "btn-trash-orphaned-sessions":
+        elif action_id == "trash-orphaned-sessions":
             names = getattr(self, "_orphaned_session_dirs", [])
             if not names:
                 self.app.notify(t("common.no_items"))
@@ -421,7 +460,7 @@ class ProjectsPane(Container):
                         name = PurePosixPath(p_path).name
                         count_str = f"  [dim]{new_count} sessions[/]" if new_count > 0 else ""
                         parent.set_label(f"{status} {name}{count_str}")
-            self.query_one("#btn-trash-session", Button).display = False
+            self._render_detail_actions(show_trash_session=False, show_remove_config=False)
         else:
             self.app.notify(t("proj.trash_fail"), severity="error")
 
