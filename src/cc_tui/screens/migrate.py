@@ -51,8 +51,9 @@ class MigratePane(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "Migrate sessions from one project to another. "
-            "Copy-based (source is preserved). Select a project below or type a path.",
+            "[bold]Migrate[/] - 세션 마이그레이션 (복사 기반, 원본 유지)\n"
+            "[dim]프로젝트 경로를 변경했을 때 기존 세션을 새 경로로 복사합니다. "
+            "아래 목록에서 소스를 선택하거나 직접 경로를 입력하세요.[/]",
             id="migrate-info",
         )
         with Vertical(id="migrate-form"):

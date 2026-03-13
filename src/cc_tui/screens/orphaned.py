@@ -42,7 +42,8 @@ class OrphanedPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "Orphaned data: session/file-history directories without matching .claude.json entries. Safe to clean.",
+            "[bold]Orphaned[/] - .claude.json에 매칭 프로젝트가 없는 고아 데이터\n"
+            "[dim]프로젝트를 삭제/이동한 뒤 남은 잔여 데이터입니다. 정리해도 안전합니다.[/]",
             id="orphaned-info",
         )
         with Vertical(classes="orphaned-section"):

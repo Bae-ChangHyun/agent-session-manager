@@ -52,8 +52,8 @@ class BackupsPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "Manage backups of .claude.json and the entire .claude directory. "
-            "Backups are stored in ~/.cc-tui/backups/.",
+            "[bold]Backups[/] - 설정/전체 백업 생성 및 복원\n"
+            "[dim]~/.cc-tui/backups/ 에 저장됩니다. 작업 전 백업을 만들어두면 실수해도 복구할 수 있습니다.[/]",
             id="backups-info",
         )
         with Horizontal(id="backup-actions"):

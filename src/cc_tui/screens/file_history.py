@@ -37,8 +37,8 @@ class FileHistoryPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "File history entries from ~/.claude/file-history/. "
-            "Version history and snapshots that can be safely cleaned.",
+            "[bold]File History[/] - Claude가 편집한 파일의 버전 히스토리/스냅샷\n"
+            "[dim]~/.claude/file-history/ 에 저장됩니다. 되돌리기용이므로 오래된 것은 정리해도 됩니다.[/]",
             id="fh-info",
         )
         yield Button("Trash Selected", variant="error", id="btn-trash-fh")
