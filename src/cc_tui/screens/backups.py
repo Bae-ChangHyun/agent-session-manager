@@ -2,10 +2,12 @@
 
 from datetime import datetime
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
-from textual.widgets import Button, DataTable, Static
+from textual.containers import Container
+from textual.widgets import DataTable, Static
 
+from cc_tui.i18n import t
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.backup import (
     create_config_backup,
@@ -39,11 +41,8 @@ class BackupsPane(Container):
         color: $text-muted;
     }
     #backup-actions {
-        height: auto;
+        height: 1;
         margin-bottom: 1;
-    }
-    #backup-actions Button {
-        margin-right: 1;
     }
     #backups-table {
         height: 1fr;
@@ -52,15 +51,10 @@ class BackupsPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "[bold]Backups[/] - 설정/전체 백업 생성 및 복원\n"
-            "[dim]~/.cc-tui/backups/ 에 저장됩니다. 작업 전 백업을 만들어두면 실수해도 복구할 수 있습니다.[/]",
+            t("bak.info"),
             id="backups-info",
         )
-        with Horizontal(id="backup-actions"):
-            yield Button("Create Config Backup", variant="primary", id="btn-config-backup")
-            yield Button("Create Full Backup", variant="warning", id="btn-full-backup")
-            yield Button("Restore Selected", variant="success", id="btn-restore")
-            yield Button("Delete Selected", variant="error", id="btn-delete-backup")
+        yield Static("", id="backup-actions")
         yield DataTable(id="backups-table")
 
     def on_mount(self) -> None:
@@ -68,7 +62,30 @@ class BackupsPane(Container):
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns("Name", "Created", "Size", "Path")
+        self._action_map = []
+        self._render_actions()
         self.refresh_data()
+
+    def _render_actions(self) -> None:
+        actions = [
+            ("config-backup", t("bak.btn_config"), "#0178d4"),
+            ("full-backup", t("bak.btn_full"), "#0178d4"),
+            ("restore", t("bak.btn_restore"), "#4EBF71"),
+            ("delete", t("bak.btn_delete"), "#ba3c5b"),
+        ]
+        parts = []
+        click_map = []
+        x = 0
+        for i, (action_id, label, color) in enumerate(actions):
+            text = f" {label} "
+            width = cell_len(text)
+            click_map.append((x, x + width, action_id))
+            parts.append(f"[bold white on {color}]{text}[/]")
+            x += width
+            if i < len(actions) - 1:
+                x += 2
+        self._action_map = click_map
+        self.query_one("#backup-actions", Static).update("  ".join(parts))
 
     def refresh_data(self) -> None:
         self.run_worker(self._load, thread=True)
@@ -92,27 +109,36 @@ class BackupsPane(Container):
             return self._backups.get(row_key.value)
         return None
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-config-backup":
+    def on_click(self, event) -> None:
+        """Handle action bar clicks."""
+        if getattr(event.widget, "id", "") != "backup-actions":
+            return
+        for start, end, action_id in self._action_map:
+            if start <= event.x < end:
+                self._handle_action(action_id)
+                break
+
+    def _handle_action(self, action_id: str) -> None:
+        if action_id == "config-backup":
             self.run_worker(self._do_config_backup, thread=True)
-        elif event.button.id == "btn-full-backup":
+        elif action_id == "full-backup":
             self.app.push_screen(
-                ConfirmScreen("Create a full backup of .claude directory?\nThis may take a moment."),
+                ConfirmScreen(t("bak.confirm_full")),
                 callback=lambda ok: self.run_worker(self._do_full_backup, thread=True) if ok else None,
             )
-        elif event.button.id == "btn-restore":
+        elif action_id == "restore":
             backup = self._get_selected_backup()
             if backup:
                 is_full = "[full]" in backup.name
                 self.app.push_screen(
-                    ConfirmScreen(f"Restore backup '{backup.name}'?\nCurrent config will be backed up first."),
+                    ConfirmScreen(t("bak.confirm_restore", name=backup.name)),
                     callback=lambda ok, b=backup, f=is_full: self._do_restore(b, f) if ok else None,
                 )
-        elif event.button.id == "btn-delete-backup":
+        elif action_id == "delete":
             backup = self._get_selected_backup()
             if backup:
                 self.app.push_screen(
-                    ConfirmScreen(f"Delete backup '{backup.name}'?"),
+                    ConfirmScreen(t("bak.confirm_delete", name=backup.name)),
                     callback=lambda ok, b=backup: self._do_delete(b) if ok else None,
                 )
 

@@ -320,14 +320,13 @@ def get_file_history() -> list[FileHistoryEntry]:
     """Get file history entries."""
     if not FILE_HISTORY_DIR.exists():
         return []
-    project_paths = get_project_paths()
-    encoded_paths = {encode_path(p) for p in project_paths}
+    active_session_ids = _get_active_session_ids()
     result = []
     try:
         for d in sorted(FILE_HISTORY_DIR.iterdir()):
             if not d.is_dir():
                 continue
-            is_orphaned = d.name not in encoded_paths
+            is_orphaned = d.name not in active_session_ids if active_session_ids else False
             result.append(
                 FileHistoryEntry(
                     dir_name=d.name,
@@ -413,6 +412,118 @@ def get_stats() -> Stats:
         claude_dir_size=_dir_size(CLAUDE_DIR) if CLAUDE_DIR.exists() else 0,
         projects_dir_size=_dir_size(PROJECTS_DIR) if PROJECTS_DIR.exists() else 0,
     )
+
+
+def get_period_usage(period: str = "daily") -> list[dict]:
+    """Get token usage data grouped by period from JSONL session files.
+
+    Parses assistant messages in all session files for model/usage/timestamp data.
+    period: 'daily', 'weekly', 'monthly'
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    model_cost_rates = {
+        "input": {"opus": 15, "sonnet": 3, "haiku": 0.80},
+        "output": {"opus": 75, "sonnet": 15, "haiku": 4},
+        "cache_read": {"opus": 1.5, "sonnet": 0.30, "haiku": 0.08},
+        "cache_create": {"opus": 18.75, "sonnet": 3.75, "haiku": 1},
+    }
+
+    def _model_tier(model_name: str) -> str:
+        if "opus" in model_name:
+            return "opus"
+        if "haiku" in model_name:
+            return "haiku"
+        return "sonnet"
+
+    def _calc_cost(usage: dict, tier: str) -> float:
+        rates = model_cost_rates
+        inp = usage.get("input_tokens", 0)
+        out = usage.get("output_tokens", 0)
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_create = usage.get("cache_creation_input_tokens", 0)
+        return (
+            inp * rates["input"][tier] / 1_000_000
+            + out * rates["output"][tier] / 1_000_000
+            + cache_read * rates["cache_read"][tier] / 1_000_000
+            + cache_create * rates["cache_create"][tier] / 1_000_000
+        )
+
+    def _period_key(dt: datetime) -> str:
+        if period == "monthly":
+            return dt.strftime("%Y-%m")
+        elif period == "weekly":
+            # ISO week start (Monday)
+            start = dt - timedelta(days=dt.weekday())
+            return start.strftime("%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+
+    # Aggregate: {period_key: {model: {input, output, cache_read, cache_create, cost}}}
+    agg: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_create_tokens": 0,
+        "cost": 0.0, "messages": 0,
+    }))
+
+    if not PROJECTS_DIR.exists():
+        return []
+
+    for d in PROJECTS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        for jsonl in d.glob("*.jsonl"):
+            try:
+                with open(jsonl) as f:
+                    for line in f:
+                        try:
+                            msg = json.loads(line)
+                            if msg.get("type") != "assistant":
+                                continue
+                            m = msg.get("message", {})
+                            usage = m.get("usage")
+                            model = m.get("model", "")
+                            ts_str = msg.get("timestamp", "")
+                            if not usage or not ts_str:
+                                continue
+                            try:
+                                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            except ValueError:
+                                continue
+                            pk = _period_key(dt)
+                            tier = _model_tier(model)
+                            short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
+                            entry = agg[pk][short_model]
+                            entry["input_tokens"] += usage.get("input_tokens", 0)
+                            entry["output_tokens"] += usage.get("output_tokens", 0)
+                            entry["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0)
+                            entry["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0)
+                            entry["cost"] += _calc_cost(usage, tier)
+                            entry["messages"] += 1
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+            except OSError:
+                continue
+
+    # Convert to sorted list
+    result = []
+    for pk in sorted(agg.keys(), reverse=True):
+        models = agg[pk]
+        total_cost = sum(m["cost"] for m in models.values())
+        total_input = sum(m["input_tokens"] for m in models.values())
+        total_output = sum(m["output_tokens"] for m in models.values())
+        total_cache = sum(m["cache_read_tokens"] for m in models.values())
+        total_msgs = sum(m["messages"] for m in models.values())
+        result.append({
+            "period": pk,
+            "total_cost": total_cost,
+            "total_input": total_input,
+            "total_output": total_output,
+            "total_cache": total_cache,
+            "total_messages": total_msgs,
+            "models": dict(models),
+        })
+    return result
 
 
 def get_usage_data() -> dict:

@@ -55,16 +55,20 @@ def migrate_sessions(
     source_path: str,
     target_path: str,
     mode: str = "append",
+    source_encoded: str | None = None,
+    target_encoded: str | None = None,
 ) -> MigrateResult:
     """Migrate sessions from source project to target project.
 
     Args:
-        source_path: Absolute path of source project
-        target_path: Absolute path of target project
+        source_path: Absolute path of source project (for display/path updates)
+        target_path: Absolute path of target project (for display/path updates)
         mode: "append" (keep existing, skip duplicates) or "overwrite"
+        source_encoded: Pre-encoded source dir name (avoids lossy re-encoding)
+        target_encoded: Pre-encoded target dir name (avoids lossy re-encoding)
     """
-    source_encoded = encode_path(source_path)
-    target_encoded = encode_path(target_path)
+    source_encoded = source_encoded or encode_path(source_path)
+    target_encoded = target_encoded or encode_path(target_path)
     source_dir = PROJECTS_DIR / source_encoded
     target_dir = PROJECTS_DIR / target_encoded
 

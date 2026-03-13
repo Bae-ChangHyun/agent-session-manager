@@ -16,16 +16,12 @@ from cc_tui.services.claude_data import (
     get_project_sessions,
     get_projects,
     get_session_messages,
+    get_sessions,
+    load_claude_json,
     remove_project_from_json,
 )
-
-
-def _fmt(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from cc_tui.i18n import t
+from cc_tui.services.cleaner import trash_sessions, trash_single_session_file
 
 
 class ProjectsPane(Container):
@@ -50,6 +46,10 @@ class ProjectsPane(Container):
     #project-tree {
         height: 1fr;
     }
+    #btn-trash-orphaned-sessions {
+        width: auto;
+        margin-top: 1;
+    }
     #project-detail-panel {
         width: 1fr;
         height: 1fr;
@@ -64,32 +64,50 @@ class ProjectsPane(Container):
         text-style: bold;
         margin-bottom: 1;
     }
-    #project-detail-body {
+    #detail-buttons {
+        dock: bottom;
         height: auto;
+        margin-top: 1;
+    }
+    #detail-buttons Button {
+        width: auto;
+        margin-right: 1;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "[bold]Projects[/] - .claude.json 프로젝트 + 세션\n"
-            "[dim]폴더를 펼치면 세션 목록이 보입니다. 세션을 클릭하면 대화 내용을 미리봅니다.\n"
-            "[green]O[/]=폴더 존재  [red]X[/]=폴더 삭제/이동됨(설정만 남음)[/]",
+            t("proj.info"),
             id="projects-info",
         )
-        yield Button("Remove Project from Config", variant="error", id="btn-remove-project")
         with Horizontal(id="projects-layout"):
             with Vertical(id="projects-tree-panel"):
                 yield Tree("Projects", id="project-tree")
+                yield Button("", variant="primary", id="btn-trash-orphaned-sessions")
             with Vertical(id="project-detail-panel"):
                 yield Static("", id="project-detail-header")
                 yield VerticalScroll(
-                    Static("프로젝트 또는 세션을 선택하세요", id="project-detail-body"),
+                    Static(t("proj.select_hint"), id="project-detail-body"),
                     id="detail-scroll",
                 )
+                with Horizontal(id="detail-buttons"):
+                    yield Button(t("proj.btn_trash_session"), variant="primary", id="btn-trash-session", disabled=True)
+                    yield Button(t("proj.btn_remove_config"), variant="primary", id="btn-remove-config", disabled=True)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._selected_project_path: str | None = None
+        self._selected_session: tuple[str, str | None] | None = None
+        self._selected_session_node = None
+        self._project_map: dict[str, ProjectInfo] = {}
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
         tree.show_root = False
+        # Hide buttons initially
+        self.query_one("#btn-trash-session", Button).display = False
+        self.query_one("#btn-remove-config", Button).display = False
+        self.query_one("#btn-trash-orphaned-sessions", Button).display = False
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -97,102 +115,147 @@ class ProjectsPane(Container):
 
     def _load_projects(self) -> None:
         projects = get_projects()
-        self.app.call_from_thread(self._build_tree, projects)
+        orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
+        self.app.call_from_thread(self._build_tree, projects, orphaned_sessions)
 
-    def _build_tree(self, projects: list[ProjectInfo]) -> None:
+    def _build_tree(self, projects: list[ProjectInfo], orphaned_sessions=None) -> None:
         tree = self.query_one("#project-tree", Tree)
         tree.clear()
-        self._project_map: dict[str, ProjectInfo] = {p.path: p for p in projects}
+        self._project_map = {p.path: p for p in projects}
+        all_paths = {p.path for p in projects}
 
-        # Group by common prefix
-        groups: dict[str, list[ProjectInfo]] = {}
-        for p in projects:
-            parts = PurePosixPath(p.path).parts
-            depth = min(4, len(parts))
-            group_key = str(PurePosixPath(*parts[:depth])) if depth >= 2 else p.path
-            groups.setdefault(group_key, []).append(p)
+        # Update orphaned sessions button
+        self._orphaned_session_dirs = [s.dir_name for s in (orphaned_sessions or [])]
+        btn = self.query_one("#btn-trash-orphaned-sessions", Button)
+        count = len(self._orphaned_session_dirs)
+        btn.label = t("proj.btn_trash_orphaned", count=count)
+        btn.display = count > 0
 
-        for group_key in sorted(groups.keys()):
-            group_projects = groups[group_key]
+        # Build a proper tree structure by inserting each path into a nested dict
+        root_nodes: dict = {}  # nested dict structure
 
-            if len(group_projects) == 1 and group_projects[0].path == group_key:
-                p = group_projects[0]
-                self._add_project_node(tree.root, p, p.path)
+        for p in sorted(projects, key=lambda x: x.path):
+            parts = PurePosixPath(p.path).parts  # ('/', 'home', 'bch', 'Project', ...)
+            current = root_nodes
+            for part in parts:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            # Mark this node as a project leaf
+            current["__project__"] = p
+
+        # Render the tree, collapsing long chains of single-child dirs
+        self._render_tree_nodes(tree.root, root_nodes, "", all_paths)
+
+    def _render_tree_nodes(self, parent_node, node_dict: dict, current_path: str, all_paths: set):
+        """Recursively render tree, collapsing single-child intermediate directories."""
+        for key, children in sorted(node_dict.items()):
+            if key == "__project__":
+                continue
+
+            new_path = f"{current_path}/{key}" if current_path else key
+            if new_path == "/":
+                new_path = "/"
+
+            is_project = "__project__" in children
+            child_dirs = {k: v for k, v in children.items() if k != "__project__"}
+
+            if is_project:
+                p = children["__project__"]
+                self._add_project_node(parent_node, p, key, child_dirs, all_paths)
+            elif len(child_dirs) == 1 and not is_project:
+                # Single child dir - collapse into parent label
+                child_key = list(child_dirs.keys())[0]
+                collapsed_label = f"{key}/{child_key}"
+                collapsed_children = child_dirs[child_key]
+                collapsed_path = f"{new_path}/{child_key}"
+
+                # Keep collapsing while single child
+                while (
+                    "__project__" not in collapsed_children
+                    and len({k for k in collapsed_children if k != "__project__"}) == 1
+                ):
+                    next_key = [k for k in collapsed_children if k != "__project__"][0]
+                    collapsed_label = f"{collapsed_label}/{next_key}"
+                    collapsed_children = collapsed_children[next_key]
+                    collapsed_path = f"{collapsed_path}/{next_key}"
+
+                is_collapsed_project = "__project__" in collapsed_children
+                collapsed_child_dirs = {k: v for k, v in collapsed_children.items() if k != "__project__"}
+
+                if is_collapsed_project:
+                    p = collapsed_children["__project__"]
+                    self._add_project_node(parent_node, p, collapsed_label, collapsed_child_dirs, all_paths)
+                elif collapsed_child_dirs:
+                    count = self._count_projects(collapsed_children)
+                    group = parent_node.add(
+                        f"[bold]{collapsed_label}/[/]  ({count})",
+                        data=("group", collapsed_path),
+                        expand=False,
+                    )
+                    self._render_tree_nodes(group, collapsed_children, collapsed_path, all_paths)
             else:
-                total_cost = sum(p.last_cost or 0 for p in group_projects)
-                cost_str = f"  ${total_cost:.2f}" if total_cost > 0 else ""
-                group_node = tree.root.add(
-                    f"[bold]{group_key}/[/]  ({len(group_projects)}){cost_str}",
-                    data=("group", group_key),
+                # Multiple children - create group node
+                count = self._count_projects(children)
+                group = parent_node.add(
+                    f"[bold]{key}/[/]  ({count})",
+                    data=("group", new_path),
                     expand=False,
                 )
-                # Sub-group
-                subgroups: dict[str, list[ProjectInfo]] = {}
-                for p in sorted(group_projects, key=lambda x: x.path):
-                    rel = p.path[len(group_key):].strip("/")
-                    sub_parts = rel.split("/")
-                    sub_key = sub_parts[0] if len(sub_parts) > 1 else ""
-                    subgroups.setdefault(sub_key, []).append(p)
+                self._render_tree_nodes(group, children, new_path, all_paths)
 
-                for sub_key in sorted(subgroups.keys()):
-                    sub_projects = subgroups[sub_key]
-                    if sub_key and len(sub_projects) > 1:
-                        sub_cost = sum(p.last_cost or 0 for p in sub_projects)
-                        cost_str = f"  ${sub_cost:.2f}" if sub_cost > 0 else ""
-                        sub_node = group_node.add(
-                            f"[bold]{sub_key}/[/]  ({len(sub_projects)}){cost_str}",
-                            data=("group", f"{group_key}/{sub_key}"),
-                            expand=False,
-                        )
-                        for p in sorted(sub_projects, key=lambda x: x.path):
-                            name = PurePosixPath(p.path).name
-                            self._add_project_node(sub_node, p, name)
-                    else:
-                        for p in sub_projects:
-                            rel = p.path[len(group_key):].strip("/") or PurePosixPath(p.path).name
-                            self._add_project_node(group_node, p, rel)
+    def _count_projects(self, node_dict: dict) -> int:
+        """Count total project leaves in a subtree."""
+        count = 1 if "__project__" in node_dict else 0
+        for k, v in node_dict.items():
+            if k != "__project__" and isinstance(v, dict):
+                count += self._count_projects(v)
+        return count
 
-    def _add_project_node(self, parent, p: ProjectInfo, display_name: str):
+    def _add_project_node(self, parent, p: ProjectInfo, display_name: str, child_dirs: dict, all_paths: set):
         """Add a project node that can be expanded to show sessions."""
         status = "[green]O[/]" if p.exists else "[red]X[/]"
-        cost_str = f"  ${p.last_cost:.2f}" if p.last_cost else ""
-        # Count session files
         encoded = encode_path(p.path)
         session_dir = PROJECTS_DIR / encoded
         session_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
-        session_str = f"  [dim]{session_count} sessions[/]" if session_count > 0 else "  [dim]no sessions[/]"
+        session_str = f"  [dim]{session_count} sessions[/]" if session_count > 0 else ""
 
-        label = f"{status} {display_name}{cost_str}{session_str}"
-        if session_count > 0:
+        label = f"{status} {display_name}{session_str}"
+
+        if session_count > 0 or child_dirs:
             node = parent.add(label, data=("project", p.path), expand=False)
-            # Add placeholder for lazy loading sessions
-            node.add_leaf("[dim]Loading sessions...[/]", data=("placeholder", None))
+            if session_count > 0:
+                node.add_leaf("[dim]...[/]", data=("placeholder", None))
+            # Add child dirs if any
+            if child_dirs:
+                self._render_tree_nodes(node, {k: v for k, v in child_dirs.items()}, p.path, all_paths)
         else:
             parent.add_leaf(label, data=("project", p.path))
 
     def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
-        """Lazy-load sessions when a project node is expanded."""
         node_data = event.node.data
         if not node_data:
             return
-        kind, value = node_data
+        kind, value = node_data[0], node_data[1] if len(node_data) > 1 else None
         if kind == "project" and value:
-            # Check if children are just the placeholder
             children = list(event.node.children)
-            if len(children) == 1 and children[0].data and children[0].data[0] == "placeholder":
-                self.run_worker(lambda: self._load_sessions_for_node(event.node, value), thread=True)
+            if any(c.data and c.data[0] == "placeholder" for c in children):
+                self.run_worker(lambda: self._load_sessions(event.node, value), thread=True)
 
-    def _load_sessions_for_node(self, node, project_path: str) -> None:
+    def _load_sessions(self, node, project_path: str) -> None:
         sessions = get_project_sessions(project_path)
-        self.app.call_from_thread(self._populate_session_nodes, node, sessions)
+        self.app.call_from_thread(self._populate_sessions, node, sessions)
 
-    def _populate_session_nodes(self, node, sessions) -> None:
-        node.remove_children()
+    def _populate_sessions(self, node, sessions) -> None:
+        # Remove placeholder
+        for child in list(node.children):
+            if child.data and child.data[0] == "placeholder":
+                child.remove()
         for s in sessions:
             ts = s.last_modified / 1000 if s.last_modified > 1e12 else s.last_modified
             dt = datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts > 0 else "?"
             size_kb = s.file_size / 1024
-            summary = s.summary.replace("\n", " ")[:60] if s.summary else s.session_id[:12]
+            summary = s.summary.replace("\n", " ")[:50] if s.summary else s.session_id[:12]
             label = f"[dim]{dt}[/]  [cyan]{summary}[/]  [dim]({size_kb:.0f}KB)[/]"
             node.add_leaf(label, data=("session", s.session_id, s.project_dir))
 
@@ -202,75 +265,177 @@ class ProjectsPane(Container):
             return
         kind = node_data[0]
 
+        btn_trash = self.query_one("#btn-trash-session", Button)
+        btn_config = self.query_one("#btn-remove-config", Button)
+
         if kind == "project":
             path = node_data[1]
             self._selected_project_path = path
+            self._selected_session = None
+            self._selected_session_node = None
+            encoded = encode_path(path)
+            session_dir = PROJECTS_DIR / encoded
+            session_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
+            # 세션 삭제 숨김, config 제거는 세션 0개일때만 표시
+            btn_trash.display = False
+            btn_config.display = session_count == 0
+            btn_config.disabled = False
             p = self._project_map.get(path)
             if p:
-                self._show_project_detail(p)
-
+                self._show_project_detail(p, session_count)
         elif kind == "session":
             session_id = node_data[1]
             project_dir = node_data[2] if len(node_data) > 2 else None
-            self.run_worker(lambda: self._load_session_messages(session_id, project_dir), thread=True)
+            self._selected_session = (session_id, project_dir)
+            self._selected_session_node = event.node
+            # 세션 삭제 표시, config 제거 숨김
+            btn_trash.display = True
+            btn_trash.disabled = False
+            btn_config.display = False
+            self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
 
-    def _show_project_detail(self, p: ProjectInfo) -> None:
+    def _show_project_detail(self, p: ProjectInfo, session_count: int = 0) -> None:
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
-        status = "[green]Found[/] 폴더가 디스크에 존재" if p.exists else "[red]Missing[/] 폴더가 삭제/이동됨"
-        cost = f"${p.last_cost:.4f}" if p.last_cost else "N/A"
-        dur = f"{p.last_duration:.0f}s" if p.last_duration else "N/A"
-        envs = len(p.session_env_dirs)
+        status = t("proj.status_found") if p.exists else t("proj.status_missing")
         header.update(f"[bold]{PurePosixPath(p.path).name}[/]")
-        body.update(
+
+        detail = (
             f"[bold]Path:[/] {p.path}\n"
             f"[bold]Status:[/] {status}\n"
-            f"[bold]Cost:[/] {cost}\n"
-            f"[bold]Duration:[/] {dur}\n"
-            f"[bold]Session Envs:[/] {envs}"
+            f"[bold]Sessions:[/] {session_count}개\n"
         )
 
-    def _load_session_messages(self, session_id: str, project_dir: str | None) -> None:
-        messages = get_session_messages(session_id, limit=50)
-        self.app.call_from_thread(self._show_session_messages, session_id, messages)
+        # Config 내용 표시
+        config_data = load_claude_json().get("projects", {}).get(p.path, {})
+        if config_data:
+            detail += "\n[bold]Config:[/]\n"
+            cost = config_data.get("lastCost")
+            if cost is not None:
+                detail += f"  Last Cost: ${cost:.4f}\n"
+            duration = config_data.get("lastDuration")
+            if duration:
+                detail += f"  Last Duration: {duration / 1000:.1f}s\n"
+            last_sid = config_data.get("lastSessionId", "")
+            if last_sid:
+                detail += f"  Last Session: {last_sid[:12]}...\n"
+            mcp = config_data.get("mcpServers", {})
+            if mcp:
+                detail += f"  MCP Servers: {', '.join(mcp.keys())}\n"
+            tools = config_data.get("allowedTools", [])
+            if tools:
+                detail += f"  Allowed Tools: {len(tools)}개\n"
+            model_usage = config_data.get("lastModelUsage", {})
+            if model_usage:
+                for model, usage in model_usage.items():
+                    short = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
+                    detail += f"  Model: {short} (${usage.get('costUSD', 0):.2f})\n"
 
-    def _show_session_messages(self, session_id: str, messages: list[dict]) -> None:
+        if session_count > 0:
+            detail += f"\n{t('proj.sessions_hint')}"
+        else:
+            detail += f"\n{t('proj.no_sessions_hint')}"
+        body.update(detail)
+
+    def _load_messages(self, session_id: str, project_dir: str | None) -> None:
+        messages = get_session_messages(session_id, limit=50)
+        self.app.call_from_thread(self._show_messages, session_id, messages)
+
+    def _show_messages(self, session_id: str, messages: list[dict]) -> None:
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
         header.update(f"[bold]Session:[/] {session_id[:16]}...")
 
         if not messages:
-            body.update("[dim]No conversation messages found[/]")
+            body.update(t("proj.no_messages"))
             return
 
         lines = []
         for m in messages:
-            role = m["type"]
             content = m["content"]
-            if role == "user":
+            if m["type"] == "user":
                 lines.append(f"[bold green]User:[/]\n{content}\n")
             else:
-                # Truncate long assistant messages
                 if len(content) > 500:
                     content = content[:500] + "..."
                 lines.append(f"[bold cyan]Assistant:[/]\n{content}\n")
         body.update("\n".join(lines))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-remove-project":
-            path = getattr(self, "_selected_project_path", None)
-            if not path:
-                self.app.notify("Select a project first")
+        if event.button.id == "btn-trash-session":
+            session = getattr(self, "_selected_session", None)
+            if not session:
                 return
+            session_id, project_dir = session
             self.app.push_screen(
-                ConfirmScreen(f"Remove '{path}' from config?"),
-                callback=lambda ok: self._do_remove(path) if ok else None,
+                ConfirmScreen(
+                    t("proj.confirm_trash_session", sid=f"{session_id[:16]}...")
+                ),
+                callback=lambda ok: self._do_trash_session() if ok else None,
             )
 
-    def _do_remove(self, path: str) -> None:
+        elif event.button.id == "btn-remove-config":
+            path = getattr(self, "_selected_project_path", None)
+            if not path:
+                return
+            self.app.push_screen(
+                ConfirmScreen(
+                    t("proj.confirm_remove_config", path=path)
+                ),
+                callback=lambda ok: self._do_remove_config(path) if ok else None,
+            )
+        elif event.button.id == "btn-trash-orphaned-sessions":
+            names = getattr(self, "_orphaned_session_dirs", [])
+            if not names:
+                self.app.notify(t("common.no_items"))
+                return
+            self.app.push_screen(
+                ConfirmScreen(t("proj.confirm_trash_orphaned", count=len(names))),
+                callback=lambda ok: self._do_trash_orphaned_sessions() if ok else None,
+            )
+
+    def _do_trash_session(self) -> None:
+        session = getattr(self, "_selected_session", None)
+        if not session:
+            return
+        session_id, project_dir = session
+        if not project_dir:
+            self.app.notify(t("proj.no_dir_info"), severity="error")
+            return
+        if trash_single_session_file(project_dir, session_id):
+            self.app.notify(t("proj.trash_ok", sid=f"{session_id[:12]}..."))
+            self._selected_session = None
+            # Remove node from tree without full rebuild
+            node = getattr(self, "_selected_session_node", None)
+            if node:
+                parent = node.parent
+                node.remove()
+                # Update parent project label's session count
+                if parent and parent.data and parent.data[0] == "project":
+                    session_dir = PROJECTS_DIR / project_dir
+                    new_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
+                    p_path = parent.data[1]
+                    p = self._project_map.get(p_path)
+                    if p:
+                        status = "[green]O[/]" if p.exists else "[red]X[/]"
+                        name = PurePosixPath(p_path).name
+                        count_str = f"  [dim]{new_count} sessions[/]" if new_count > 0 else ""
+                        parent.set_label(f"{status} {name}{count_str}")
+            self.query_one("#btn-trash-session", Button).display = False
+        else:
+            self.app.notify(t("proj.trash_fail"), severity="error")
+
+    def _do_remove_config(self, path: str) -> None:
         create_config_backup()
         if remove_project_from_json(path):
-            self.app.notify(f"Removed: {path}")
+            self.app.notify(t("proj.config_removed", path=path))
+            # Full rebuild needed since project is gone from config
             self.refresh_data()
         else:
-            self.app.notify("Failed to remove", severity="error")
+            self.app.notify(t("proj.config_fail"), severity="error")
+
+    def _do_trash_orphaned_sessions(self) -> None:
+        names = getattr(self, "_orphaned_session_dirs", [])
+        ok, fail = trash_sessions(names)
+        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
+        self.refresh_data()

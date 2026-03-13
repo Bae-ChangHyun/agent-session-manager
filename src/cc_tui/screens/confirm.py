@@ -5,6 +5,8 @@ from textual.containers import Grid
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
+from cc_tui.i18n import t
+
 
 class ConfirmScreen(ModalScreen[bool]):
     """A modal confirmation dialog."""
@@ -42,8 +44,8 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         yield Grid(
             Label(self.message, id="confirm-question"),
-            Button("Confirm", variant="error", id="confirm-yes"),
-            Button("Cancel", variant="primary", id="confirm-no"),
+            Button(t("confirm.yes"), variant="error", id="confirm-yes"),
+            Button(t("confirm.no"), variant="primary", id="confirm-no"),
             id="confirm-dialog",
         )
 

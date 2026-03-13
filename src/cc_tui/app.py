@@ -2,17 +2,15 @@
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
+from cc_tui.i18n import t
 from cc_tui.screens.backups import BackupsPane
 from cc_tui.screens.dashboard import DashboardPane
 from cc_tui.screens.debug_todos import DebugTodosPane
 from cc_tui.screens.file_history import FileHistoryPane
 from cc_tui.screens.migrate import MigratePane
-from cc_tui.screens.orphaned import OrphanedPane
 from cc_tui.screens.projects import ProjectsPane
-from cc_tui.screens.sessions import SessionsPane
 
 
 class CCTuiApp(App):
@@ -49,27 +47,23 @@ class CCTuiApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(id="main-tabs"):
-            with TabPane("Dashboard", id="tab-dashboard"):
+            with TabPane(t("tab.dashboard"), id="tab-dashboard"):
                 yield DashboardPane()
-            with TabPane("Projects", id="tab-projects"):
+            with TabPane(t("tab.projects"), id="tab-projects"):
                 yield ProjectsPane()
-            with TabPane("Sessions", id="tab-sessions"):
-                yield SessionsPane()
-            with TabPane("File History", id="tab-file-history"):
+            with TabPane(t("tab.file_history"), id="tab-file-history"):
                 yield FileHistoryPane()
-            with TabPane("Orphaned", id="tab-orphaned"):
-                yield OrphanedPane()
-            with TabPane("Debug/Todos", id="tab-debug-todos"):
+            with TabPane(t("tab.debug_todos"), id="tab-debug-todos"):
                 yield DebugTodosPane()
-            with TabPane("Migrate", id="tab-migrate"):
+            with TabPane(t("tab.migrate"), id="tab-migrate"):
                 yield MigratePane()
-            with TabPane("Backups", id="tab-backups"):
+            with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
         yield Footer()
 
     def action_refresh(self) -> None:
-        """Refresh all panes."""
-        for pane in self.query("DashboardPane, ProjectsPane, SessionsPane, OrphanedPane"):
+        """Refresh all panes that have refresh_data."""
+        for pane in self.query("DashboardPane, ProjectsPane, FileHistoryPane, DebugTodosPane, MigratePane"):
             if hasattr(pane, "refresh_data"):
                 pane.refresh_data()
-        self.notify("Refreshed")
+        self.notify(t("app.refreshed"))
