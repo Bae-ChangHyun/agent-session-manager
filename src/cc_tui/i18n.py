@@ -301,6 +301,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "common.orphaned": {"en": "[yellow]Orphaned[/]", "ko": "[yellow]Orphaned[/]"},
     "common.trash_bulk_ok": {"en": "Deleted {ok} items ({fail} failed)", "ko": "{ok}개 삭제 완료 ({fail}개 실패)"},
     "common.no_items": {"en": "No items to delete", "ko": "삭제할 항목 없음"},
+    "bak.config_created": {"en": "Config backup created: {path}", "ko": "설정 백업 생성: {path}"},
+    "bak.backup_failed": {"en": "Failed to create backup", "ko": "백업 생성 실패"},
+    "bak.full_creating": {"en": "Creating full backup...", "ko": "전체 백업 생성 중..."},
+    "bak.full_created": {"en": "Full backup created: {path}", "ko": "전체 백업 생성: {path}"},
+    "bak.restored": {"en": "Restored: {name}", "ko": "복원 완료: {name}"},
+    "bak.restore_failed": {"en": "Restore failed", "ko": "복원 실패"},
+    "bak.deleted": {"en": "Deleted: {name}", "ko": "삭제 완료: {name}"},
+    "bak.delete_failed": {"en": "Delete failed", "ko": "삭제 실패"},
 }
 
 
