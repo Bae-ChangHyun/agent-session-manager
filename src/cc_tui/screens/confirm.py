@@ -38,18 +38,30 @@ class ConfirmScreen(ModalScreen[bool]):
     BINDINGS = [
         ("y", "confirm", "Yes"),
         ("n", "cancel", "No"),
+        ("enter", "select_focused", "Enter"),
         ("escape", "cancel", "Cancel"),
+        ("left", "focus_left", "Left"),
+        ("right", "focus_right", "Right"),
     ]
 
     def __init__(self, message: str, **kwargs):
         super().__init__(**kwargs)
         self.message = message
+        self._focused_idx = 0  # 0=yes, 1=no
 
     def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-dialog"):
+            yield Static(self.message, id="confirm-question")
+            yield Static("", id="confirm-actions")
+
+    def on_mount(self) -> None:
+        self._render_bar()
+
+    def _render_bar(self) -> None:
         yes_label = t("confirm.yes")
         no_label = t("confirm.no")
-        yes_text = f" {yes_label} "
-        no_text = f" {no_label} "
+        yes_text = f" {yes_label} (y) "
+        no_text = f" {no_label} (n) "
         yes_w = cell_len(yes_text)
         no_w = cell_len(no_text)
         gap = 4
@@ -57,14 +69,17 @@ class ConfirmScreen(ModalScreen[bool]):
             (0, yes_w, "yes"),
             (yes_w + gap, yes_w + gap + no_w, "no"),
         ]
-        bar = (
-            f"[bold white on #ba3c5b]{yes_text}[/]"
-            f"    "
-            f"[bold white on #555555]{no_text}[/]"
+
+        if self._focused_idx == 0:
+            yes_part = f"[bold white on #ba3c5b]{yes_text}[/]"
+            no_part = f"[bold on #555555]{no_text}[/]"
+        else:
+            yes_part = f"[bold on #555555]{yes_text}[/]"
+            no_part = f"[bold white on #ba3c5b]{no_text}[/]"
+
+        self.query_one("#confirm-actions", Static).update(
+            f"{yes_part}    {no_part}"
         )
-        with Vertical(id="confirm-dialog"):
-            yield Static(self.message, id="confirm-question")
-            yield Static(bar, id="confirm-actions")
 
     def on_click(self, event) -> None:
         if getattr(event.widget, "id", "") != "confirm-actions":
@@ -79,3 +94,14 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_select_focused(self) -> None:
+        self.dismiss(self._focused_idx == 0)
+
+    def action_focus_left(self) -> None:
+        self._focused_idx = 0
+        self._render_bar()
+
+    def action_focus_right(self) -> None:
+        self._focused_idx = 1
+        self._render_bar()
