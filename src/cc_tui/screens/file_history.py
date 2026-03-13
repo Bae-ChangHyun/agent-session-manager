@@ -37,6 +37,10 @@ def _display_name(dir_name: str, encoded_to_path: dict) -> str:
 class FileHistoryPane(Container):
     """View and manage file history entries."""
 
+    BINDINGS = [
+        ("space", "toggle_select", "Select"),
+    ]
+
     CSS = """
     FileHistoryPane {
         height: 1fr;
@@ -93,6 +97,9 @@ class FileHistoryPane(Container):
         table.add_columns("Project / Session", "Status")
         self._orphaned_fh_names = []
         self._action_map = []
+        self._selected: set[str] = set()
+        self._row_display: dict[str, str] = {}
+        self._group_items: dict[str, list[str]] = {}
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -112,6 +119,10 @@ class FileHistoryPane(Container):
         self._encoded_to_path = encoded_to_path
         self._session_to_project = session_to_project or {}
         self._orphaned_fh_names = [e.dir_name for e in entries if e.is_orphaned]
+        self._selected.clear()
+        self._row_display = {}
+        self._group_items = {}
+
         # Group by project
         from collections import defaultdict
         groups: dict[str, list] = defaultdict(list)
@@ -125,26 +136,54 @@ class FileHistoryPane(Container):
                 groups[display].append(e)
 
         if orphaned:
+            hdr = "__hdr_orphaned__"
             table.add_row(
                 f"[bold yellow]── Orphaned ({len(orphaned)})[/]", "",
-                key="__hdr_orphaned__",
+                key=hdr,
             )
+            self._group_items[hdr] = [e.dir_name for e in orphaned]
             for i, e in enumerate(orphaned, 1):
-                table.add_row(f"  [yellow]Orphan {i}[/]", t("common.orphaned"), key=e.dir_name)
+                display = f"[yellow]Orphan {i}[/]"
+                self._row_display[e.dir_name] = display
+                table.add_row(f"  {display}", t("common.orphaned"), key=e.dir_name)
 
         for project in sorted(groups.keys()):
             items = groups[project]
+            hdr = f"__hdr_{project}__"
             table.add_row(
                 f"[bold cyan]── {project} ({len(items)})[/]", "",
-                key=f"__hdr_{project}__",
+                key=hdr,
             )
+            self._group_items[hdr] = [e.dir_name for e in items]
             for i, e in enumerate(items, 1):
-                table.add_row(f"  Session {i}", t("common.active"), key=e.dir_name)
+                display = f"Session {i}"
+                self._row_display[e.dir_name] = display
+                table.add_row(f"  {display}", t("common.active"), key=e.dir_name)
+        self._render_actions()
+
+    def action_toggle_select(self) -> None:
+        """Toggle selection on the current row (spacebar)."""
+        table = self.query_one("#fh-table", DataTable)
+        if table.cursor_row is None or table.row_count == 0:
+            return
+        row_key = list(table.rows.keys())[table.cursor_row]
+        name = row_key.value
+        if name.startswith("__hdr_") or name not in self._row_display:
+            return
+        name_col = list(table.columns.keys())[0]
+        if name in self._selected:
+            self._selected.discard(name)
+            table.update_cell(row_key, name_col, f"  {self._row_display[name]}")
+        else:
+            self._selected.add(name)
+            table.update_cell(row_key, name_col, f"[reverse] ☑ [/]{self._row_display[name]}")
         self._render_actions()
 
     def _render_actions(self) -> None:
         """Render action bar with click-mapped Rich markup buttons."""
-        actions = [("trash-selected", t("fh.btn_trash"), "#e8890c")]
+        sel = len(self._selected)
+        trash_label = t("fh.btn_trash") + (f" ({sel})" if sel else "")
+        actions = [("trash-selected", trash_label, "#e8890c")]
         count = len(getattr(self, "_orphaned_fh_names", []))
         if count > 0:
             actions.append(("trash-orphaned", t("fh.btn_trash_orphaned", count=count), "#ba3c5b"))
@@ -204,11 +243,26 @@ class FileHistoryPane(Container):
                 break
 
     def _click_trash_selected(self) -> None:
+        # Multi-select mode
+        if self._selected:
+            names = list(self._selected)
+            self.app.push_screen(
+                ConfirmScreen(f"선택한 {len(names)}개 file history를 삭제하시겠습니까?"),
+                callback=lambda ok, ns=names: self._do_trash_bulk(ns) if ok else None,
+            )
+            return
         table = self.query_one("#fh-table", DataTable)
         if table.cursor_row is not None and table.row_count > 0:
             row_key = list(table.rows.keys())[table.cursor_row]
             name = row_key.value
+            # Group delete
             if name.startswith("__hdr_"):
+                items = self._group_items.get(name, [])
+                if items:
+                    self.app.push_screen(
+                        ConfirmScreen(f"이 그룹의 {len(items)}개 file history를 삭제하시겠습니까?"),
+                        callback=lambda ok, ns=items: self._do_trash_bulk(ns) if ok else None,
+                    )
                 return
             display = _display_name(name, self._encoded_to_path)
             self.app.push_screen(
@@ -234,6 +288,12 @@ class FileHistoryPane(Container):
             self.refresh_data()
         else:
             self.app.notify(t("common.failed"), severity="error")
+
+    def _do_trash_bulk(self, names: list[str]) -> None:
+        ok, fail = trash_file_histories(names)
+        self._selected.clear()
+        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
+        self.refresh_data()
 
     def _do_trash_orphaned(self) -> None:
         names = getattr(self, "_orphaned_fh_names", [])

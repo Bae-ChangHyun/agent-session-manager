@@ -33,6 +33,10 @@ def _format_bytes(size: int) -> str:
 class DebugTodosPane(Container):
     """View and manage debug files and todos."""
 
+    BINDINGS = [
+        ("space", "toggle_select", "Select"),
+    ]
+
     CSS = """
     DebugTodosPane {
         height: 1fr;
@@ -115,6 +119,12 @@ class DebugTodosPane(Container):
         self._orphaned_todo_names = []
         self._empty_debug = 0
         self._empty_todo = 0
+        self._selected_debug: set[str] = set()
+        self._selected_todo: set[str] = set()
+        self._debug_row_display: dict[str, str] = {}
+        self._todo_row_display: dict[str, str] = {}
+        self._debug_group_items: dict[str, list[str]] = {}
+        self._todo_group_items: dict[str, list[str]] = {}
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -147,34 +157,51 @@ class DebugTodosPane(Container):
             f"[bold]Todo Files[/]  [dim]({len(todos)}개, orphaned: [yellow]{orphaned_todos}[/])[/]"
         )
 
+        self._selected_debug.clear()
+        self._selected_todo.clear()
+
         dt = self.query_one("#debug-table", DataTable)
         dt.clear()
         if debug:
-            self._populate_grouped_table(
+            gi, rd = self._populate_grouped_table(
                 dt, debug,
                 key_fn=lambda d: d.name.split(".")[0],
             )
+            self._debug_group_items = gi
+            self._debug_row_display = rd
         else:
             dt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
+            self._debug_group_items = {}
+            self._debug_row_display = {}
 
         tt = self.query_one("#todo-table", DataTable)
         tt.clear()
         if todos:
-            self._populate_grouped_table(
+            gi, rd = self._populate_grouped_table(
                 tt, todos,
                 key_fn=lambda td: td.name.split("-agent-")[0] if "-agent-" in td.name else td.name.split(".")[0],
             )
+            self._todo_group_items = gi
+            self._todo_row_display = rd
         else:
             tt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
+            self._todo_group_items = {}
+            self._todo_row_display = {}
 
         self._render_debug_actions()
         self._render_todo_actions()
 
-    def _populate_grouped_table(self, table: DataTable, entries, key_fn) -> None:
-        """Populate a DataTable with entries grouped by project."""
+    def _populate_grouped_table(self, table: DataTable, entries, key_fn):
+        """Populate a DataTable with entries grouped by project.
+
+        Returns (group_items, row_display) for group delete and multi-select.
+        """
         from collections import defaultdict
         groups: dict[str, list] = defaultdict(list)
         orphaned = []
+        group_items: dict[str, list[str]] = {}
+        row_display: dict[str, str] = {}
+
         for e in entries:
             if e.is_orphaned:
                 orphaned.append(e)
@@ -185,13 +212,17 @@ class DebugTodosPane(Container):
 
         # Orphaned group first
         if orphaned:
+            hdr = "__hdr_orphaned__"
             table.add_row(
                 f"[bold yellow]── Orphaned ({len(orphaned)})[/]", "", "",
-                key="__hdr_orphaned__",
+                key=hdr,
             )
+            group_items[hdr] = [e.name for e in orphaned]
             for i, e in enumerate(orphaned, 1):
+                display = f"[yellow]Orphan {i}[/]"
+                row_display[e.name] = display
                 table.add_row(
-                    f"  [yellow]Orphan {i}[/]",
+                    f"  {display}",
                     _format_bytes(e.size_bytes),
                     t("common.orphaned"),
                     key=e.name,
@@ -201,18 +232,24 @@ class DebugTodosPane(Container):
         for project in sorted(groups.keys()):
             items = groups[project]
             total_size = sum(e.size_bytes for e in items)
+            hdr = f"__hdr_{project}__"
             table.add_row(
                 f"[bold cyan]── {project} ({len(items)})[/]",
                 f"[dim]{_format_bytes(total_size)}[/]", "",
-                key=f"__hdr_{project}__",
+                key=hdr,
             )
+            group_items[hdr] = [e.name for e in items]
             for i, e in enumerate(items, 1):
+                display = f"Session {i}"
+                row_display[e.name] = display
                 table.add_row(
-                    f"  Session {i}",
+                    f"  {display}",
                     _format_bytes(e.size_bytes),
                     t("common.active"),
                     key=e.name,
                 )
+
+        return group_items, row_display
 
     def _build_action_bar(self, actions):
         """Build Rich markup action bar and click map.
@@ -232,8 +269,41 @@ class DebugTodosPane(Container):
                 x += 2
         return "  ".join(parts), click_map
 
+    def action_toggle_select(self) -> None:
+        """Toggle selection on the current row (spacebar)."""
+        focused = self.app.focused
+        if focused is None:
+            return
+        table_id = getattr(focused, "id", "")
+        if table_id == "debug-table":
+            selected = self._selected_debug
+            row_display = self._debug_row_display
+        elif table_id == "todo-table":
+            selected = self._selected_todo
+            row_display = self._todo_row_display
+        else:
+            return
+        table = focused
+        if table.cursor_row is None or table.row_count == 0:
+            return
+        row_key = list(table.rows.keys())[table.cursor_row]
+        name = row_key.value
+        if name.startswith("__hdr_") or name not in row_display:
+            return
+        name_col = list(table.columns.keys())[0]
+        if name in selected:
+            selected.discard(name)
+            table.update_cell(row_key, name_col, f"  {row_display[name]}")
+        else:
+            selected.add(name)
+            table.update_cell(row_key, name_col, f"[reverse] ☑ [/]{row_display[name]}")
+        self._render_debug_actions()
+        self._render_todo_actions()
+
     def _render_debug_actions(self) -> None:
-        actions = [("trash-debug", t("dt.btn_trash_debug"), "#e8890c")]
+        sel = len(self._selected_debug)
+        trash_label = t("dt.btn_trash_debug") + (f" ({sel})" if sel else "")
+        actions = [("trash-debug", trash_label, "#e8890c")]
         if self._empty_debug > 0:
             actions.append(("prune-debug", t("dt.btn_prune_debug", count=self._empty_debug), "#0178d4"))
         if len(self._orphaned_debug_names) > 0:
@@ -243,7 +313,9 @@ class DebugTodosPane(Container):
         self.query_one("#debug-actions", Static).update(markup)
 
     def _render_todo_actions(self) -> None:
-        actions = [("trash-todo", t("dt.btn_trash_todo"), "#e8890c")]
+        sel = len(self._selected_todo)
+        trash_label = t("dt.btn_trash_todo") + (f" ({sel})" if sel else "")
+        actions = [("trash-todo", trash_label, "#e8890c")]
         if self._empty_todo > 0:
             actions.append(("prune-todo", t("dt.btn_prune_todo", count=self._empty_todo), "#0178d4"))
         if len(self._orphaned_todo_names) > 0:
@@ -313,22 +385,52 @@ class DebugTodosPane(Container):
 
     def _handle_action(self, action_id: str) -> None:
         if action_id == "trash-debug":
+            # Multi-select mode
+            if self._selected_debug:
+                names = list(self._selected_debug)
+                self.app.push_screen(
+                    ConfirmScreen(f"선택한 {len(names)}개 debug 파일을 삭제하시겠습니까?"),
+                    callback=lambda ok, ns=names: self._do_trash_bulk("debug", ns) if ok else None,
+                )
+                return
             table = self.query_one("#debug-table", DataTable)
             if table.cursor_row is not None and table.row_count > 0:
                 row_key = list(table.rows.keys())[table.cursor_row]
                 name = row_key.value
+                # Group delete
                 if name.startswith("__hdr_"):
+                    items = self._debug_group_items.get(name, [])
+                    if items:
+                        self.app.push_screen(
+                            ConfirmScreen(f"이 그룹의 {len(items)}개 debug 파일을 삭제하시겠습니까?"),
+                            callback=lambda ok, ns=items: self._do_trash_bulk("debug", ns) if ok else None,
+                        )
                     return
                 self.app.push_screen(
                     ConfirmScreen(t("dt.confirm_debug", name=name)),
                     callback=lambda ok, n=name: self._trash_debug(n) if ok else None,
                 )
         elif action_id == "trash-todo":
+            # Multi-select mode
+            if self._selected_todo:
+                names = list(self._selected_todo)
+                self.app.push_screen(
+                    ConfirmScreen(f"선택한 {len(names)}개 todo 파일을 삭제하시겠습니까?"),
+                    callback=lambda ok, ns=names: self._do_trash_bulk("todo", ns) if ok else None,
+                )
+                return
             table = self.query_one("#todo-table", DataTable)
             if table.cursor_row is not None and table.row_count > 0:
                 row_key = list(table.rows.keys())[table.cursor_row]
                 name = row_key.value
+                # Group delete
                 if name.startswith("__hdr_"):
+                    items = self._todo_group_items.get(name, [])
+                    if items:
+                        self.app.push_screen(
+                            ConfirmScreen(f"이 그룹의 {len(items)}개 todo 파일을 삭제하시겠습니까?"),
+                            callback=lambda ok, ns=items: self._do_trash_bulk("todo", ns) if ok else None,
+                        )
                     return
                 self.app.push_screen(
                     ConfirmScreen(t("dt.confirm_todo", name=name)),
@@ -393,6 +495,17 @@ class DebugTodosPane(Container):
     def _do_prune_todo(self) -> None:
         ok, fail = prune_empty_todo_files()
         self.app.notify(t("dt.prune_ok", ok=ok))
+        self.refresh_data()
+
+    def _do_trash_bulk(self, kind: str, names: list[str]) -> None:
+        """Bulk delete for multi-select and group delete."""
+        if kind == "debug":
+            ok, fail = trash_debug_files(names)
+            self._selected_debug.clear()
+        else:
+            ok, fail = trash_todo_files(names)
+            self._selected_todo.clear()
+        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
         self.refresh_data()
 
     def _do_trash_orphaned_debug(self) -> None:
