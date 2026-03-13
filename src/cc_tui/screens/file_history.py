@@ -112,13 +112,13 @@ class FileHistoryPane(Container):
         self._encoded_to_path = encoded_to_path
         self._session_to_project = session_to_project or {}
         self._orphaned_fh_names = [e.dir_name for e in entries if e.is_orphaned]
-        for e in entries:
-            # For UUID entries, show project path if known
+        # Sort: orphaned first
+        entries_sorted = sorted(entries, key=lambda e: (not e.is_orphaned, e.dir_name))
+        for e in entries_sorted:
             project = self._session_to_project.get(e.dir_name)
-            if project:
-                display = project
-            else:
-                display = _display_name(e.dir_name, encoded_to_path)
+            display = project if project else _display_name(e.dir_name, encoded_to_path)
+            if e.is_orphaned:
+                display = f"[yellow]{display}[/]"
             status = t("common.orphaned") if e.is_orphaned else t("common.active")
             table.add_row(display, status, key=e.dir_name)
         self._render_actions()

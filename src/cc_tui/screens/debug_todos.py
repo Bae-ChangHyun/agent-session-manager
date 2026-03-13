@@ -9,7 +9,7 @@ from textual.widgets import DataTable, Static
 
 from cc_tui.models import DEBUG_DIR, TODOS_DIR
 from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_debug_files, get_todos
+from cc_tui.services.claude_data import get_debug_files, get_todos, _get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import (
     count_empty_files,
@@ -125,11 +125,13 @@ class DebugTodosPane(Container):
         todos = get_todos()
         empty_debug = count_empty_files(DEBUG_DIR)
         empty_todo = count_empty_files(TODOS_DIR)
-        self.app.call_from_thread(self._update, debug, todos, empty_debug, empty_todo)
+        session_to_project = _get_session_to_project_map()
+        self.app.call_from_thread(self._update, debug, todos, empty_debug, empty_todo, session_to_project)
 
-    def _update(self, debug, todos, empty_debug: int = 0, empty_todo: int = 0) -> None:
+    def _update(self, debug, todos, empty_debug: int = 0, empty_todo: int = 0, session_to_project: dict = None) -> None:
         self._debug_entries = {d.name: d for d in debug}
         self._todo_entries = {td.name: td for td in todos}
+        self._session_to_project = session_to_project or {}
 
         orphaned_debug = sum(1 for d in debug if d.is_orphaned)
         orphaned_todos = sum(1 for td in todos if td.is_orphaned)
@@ -145,21 +147,37 @@ class DebugTodosPane(Container):
             f"[bold]Todo Files[/]  [dim]({len(todos)}개, orphaned: [yellow]{orphaned_todos}[/])[/]"
         )
 
+        # Sort: orphaned first
+        debug_sorted = sorted(debug, key=lambda d: (not d.is_orphaned, d.name))
+        todo_sorted = sorted(todos, key=lambda td: (not td.is_orphaned, td.name))
+
         dt = self.query_one("#debug-table", DataTable)
         dt.clear()
-        if debug:
-            for d in debug:
+        if debug_sorted:
+            for d in debug_sorted:
+                # debug: {UUID}.txt → stem is session ID
+                session_id = d.name.split(".")[0]
+                project = self._session_to_project.get(session_id)
+                display = project if project else d.name
+                if d.is_orphaned:
+                    display = f"[yellow]{display}[/]"
                 status = t("common.orphaned") if d.is_orphaned else t("common.active")
-                dt.add_row(d.name, _format_bytes(d.size_bytes), status, key=d.name)
+                dt.add_row(display, _format_bytes(d.size_bytes), status, key=d.name)
         else:
             dt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
 
         tt = self.query_one("#todo-table", DataTable)
         tt.clear()
-        if todos:
-            for td in todos:
+        if todo_sorted:
+            for td in todo_sorted:
+                # todo: {UUID}-agent-{UUID}.json → extract first UUID
+                session_id = td.name.split("-agent-")[0] if "-agent-" in td.name else td.name.split(".")[0]
+                project = self._session_to_project.get(session_id)
+                display = project if project else td.name
+                if td.is_orphaned:
+                    display = f"[yellow]{display}[/]"
                 status = t("common.orphaned") if td.is_orphaned else t("common.active")
-                tt.add_row(td.name, _format_bytes(td.size_bytes), status, key=td.name)
+                tt.add_row(display, _format_bytes(td.size_bytes), status, key=td.name)
         else:
             tt.add_row(f"[dim]{t('dt.none')}[/]", "", "")
 
