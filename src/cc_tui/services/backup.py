@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
 
+from send2trash import send2trash
+
 from cc_tui.models import BACKUP_BASE_DIR, CLAUDE_DIR, CLAUDE_JSON, BackupInfo
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_backup_path(path: Path) -> None:
     """Ensure path is within the backup directory."""
     resolved = path.resolve()
-    allowed = BACKUP_BASE_DIR.resolve()
-    if not (resolved == allowed or str(resolved).startswith(str(allowed) + "/")):
+    if not resolved.is_relative_to(BACKUP_BASE_DIR.resolve()):
         raise ValueError(f"Backup path outside allowed directory: {path}")
 
 
@@ -35,7 +39,8 @@ def create_config_backup() -> str | None:
     try:
         shutil.copy2(str(CLAUDE_JSON), str(dest))
         return str(dest)
-    except OSError:
+    except OSError as e:
+        logger.warning("Failed to create config backup: %s", e)
         return None
 
 
@@ -45,19 +50,18 @@ def create_full_backup() -> str | None:
     backup_dir = _ensure_backup_dir() / f"full-{timestamp}"
 
     try:
-        # Backup .claude directory
         if CLAUDE_DIR.exists():
             shutil.copytree(
                 str(CLAUDE_DIR),
                 str(backup_dir / ".claude"),
-                symlinks=True,
+                symlinks=False,
                 ignore_dangling_symlinks=True,
             )
-        # Backup .claude.json
         if CLAUDE_JSON.exists():
             shutil.copy2(str(CLAUDE_JSON), str(backup_dir / ".claude.json"))
         return str(backup_dir)
-    except OSError:
+    except OSError as e:
+        logger.warning("Failed to create full backup: %s", e)
         return None
 
 
@@ -66,7 +70,6 @@ def list_backups() -> list[BackupInfo]:
     backup_dir = _ensure_backup_dir()
     result = []
 
-    # Config backups
     config_dir = backup_dir / "config"
     if config_dir.exists():
         for f in sorted(config_dir.iterdir(), reverse=True):
@@ -81,7 +84,6 @@ def list_backups() -> list[BackupInfo]:
                     )
                 )
 
-    # Full backups
     for d in sorted(backup_dir.iterdir(), reverse=True):
         if d.is_dir() and d.name.startswith("full-"):
             size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
@@ -106,68 +108,94 @@ def restore_config_backup(backup_path: str) -> bool:
         return False
     try:
         _validate_backup_path(src)
-        # Create a backup of current before restoring
         create_config_backup()
         shutil.copy2(str(src), str(CLAUDE_JSON))
         return True
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore config backup: %s", e)
         return False
 
 
 def restore_full_backup(backup_path: str) -> bool:
-    """Restore a full backup with rename+rollback for safety."""
+    """Restore a full backup with rename+rollback for safety.
+
+    Both .claude directory and .claude.json are restored atomically --
+    if either step fails, both are rolled back.
+    """
     src = Path(backup_path)
     if not src.exists():
         return False
     try:
         _validate_backup_path(src)
-        # Create FULL backup of current state before restoring
         safety = create_full_backup()
         if safety is None:
-            return False  # Refuse to proceed without a safety backup
+            return False
 
         claude_backup = src / ".claude"
         json_backup = src / ".claude.json"
+        temp_dir = CLAUDE_DIR.with_name(".claude.restoring")
+        temp_json = CLAUDE_JSON.with_suffix(".restoring")
 
+        # Phase 1: Prepare .claude.json copy to temp (validate before touching anything)
+        if json_backup.exists():
+            try:
+                shutil.copy2(str(json_backup), str(temp_json))
+            except OSError:
+                if temp_json.exists():
+                    temp_json.unlink()
+                raise
+
+        # Phase 2: Replace .claude directory with rename+rollback
         if claude_backup.exists():
-            # Rename instead of delete — allows rollback on failure
-            temp_dir = CLAUDE_DIR.with_name(".claude.restoring")
             if temp_dir.exists():
                 shutil.rmtree(str(temp_dir))
             if CLAUDE_DIR.exists():
                 CLAUDE_DIR.rename(temp_dir)
             try:
-                shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=True)
-                # Copy succeeded — remove temp
-                if temp_dir.exists():
-                    shutil.rmtree(str(temp_dir))
+                shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=False)
             except Exception:
-                # Rollback: restore original
+                # Rollback directory
                 if temp_dir.exists():
                     if CLAUDE_DIR.exists():
-                        shutil.rmtree(str(CLAUDE_DIR))
+                        try:
+                            shutil.rmtree(str(CLAUDE_DIR))
+                        except OSError as rmtree_err:
+                            logger.error(
+                                "Rollback: failed to remove partial .claude dir: %s. "
+                                "Original data preserved at %s",
+                                rmtree_err, temp_dir,
+                            )
+                            if temp_json.exists():
+                                temp_json.unlink()
+                            raise
                     temp_dir.rename(CLAUDE_DIR)
+                if temp_json.exists():
+                    temp_json.unlink()
                 raise
 
-        if json_backup.exists():
-            shutil.copy2(str(json_backup), str(CLAUDE_JSON))
+        # Phase 3: Atomically move .claude.json (rename is atomic on same filesystem)
+        if temp_json.exists():
+            temp_json.rename(CLAUDE_JSON)
+
+        # Phase 4: Cleanup
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
 
         return True
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore full backup: %s", e)
         return False
 
 
 def delete_backup(backup_path: str) -> bool:
-    """Delete a backup."""
+    """Delete a backup (moves to OS trash for safety)."""
     p = Path(backup_path)
     if not p.exists():
         return False
     try:
         _validate_backup_path(p)
-        if p.is_dir():
-            shutil.rmtree(str(p))
-        else:
-            p.unlink()
+        send2trash(str(p))
         return True
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to delete backup: %s", e)
         return False

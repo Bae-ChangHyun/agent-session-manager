@@ -58,6 +58,7 @@ class BackupsPane(Container):
         yield DataTable(id="backups-table")
 
     def on_mount(self) -> None:
+        self._backups: dict = {}
         table = self.query_one("#backups-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True

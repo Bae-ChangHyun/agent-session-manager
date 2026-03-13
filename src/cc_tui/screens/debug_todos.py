@@ -8,7 +8,7 @@ from textual.widgets import DataTable, Static
 
 from cc_tui.models import DEBUG_DIR, TODOS_DIR
 from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_debug_files, get_todos, _get_session_to_project_map
+from cc_tui.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import (
     count_empty_files,
@@ -97,6 +97,9 @@ class DebugTodosPane(Container):
                 )
 
     def on_mount(self) -> None:
+        self._debug_entries: dict = {}
+        self._todo_entries: dict = {}
+        self._session_to_project: dict = {}
         dt = self.query_one("#debug-table", DataTable)
         dt.cursor_type = "row"
         dt.zebra_stripes = True
@@ -129,7 +132,7 @@ class DebugTodosPane(Container):
         todos = get_todos()
         empty_debug = count_empty_files(DEBUG_DIR)
         empty_todo = count_empty_files(TODOS_DIR)
-        session_to_project = _get_session_to_project_map()
+        session_to_project = get_session_to_project_map()
         self.app.call_from_thread(self._update, debug, todos, empty_debug, empty_todo, session_to_project)
 
     def _update(self, debug, todos, empty_debug: int = 0, empty_todo: int = 0, session_to_project: dict = None) -> None:
@@ -145,10 +148,10 @@ class DebugTodosPane(Container):
         self._empty_todo = empty_todo
 
         self.query_one("#debug-title", Static).update(
-            f"[bold]Debug Files[/]  [dim]({len(debug)}개, orphaned: [yellow]{orphaned_debug}[/])[/]"
+            f"[bold]Debug Files[/]  [dim]({len(debug)}, orphaned: [yellow]{orphaned_debug}[/])[/]"
         )
         self.query_one("#todo-title", Static).update(
-            f"[bold]Todo Files[/]  [dim]({len(todos)}개, orphaned: [yellow]{orphaned_todos}[/])[/]"
+            f"[bold]Todo Files[/]  [dim]({len(todos)}, orphaned: [yellow]{orphaned_todos}[/])[/]"
         )
 
         self._selected_debug.clear()
@@ -519,16 +522,16 @@ class DebugTodosPane(Container):
         self.refresh_data()
 
     def _do_trash_orphaned_debug(self) -> None:
+        names = list(self._orphaned_debug_names)
         def _work():
-            names = getattr(self, "_orphaned_debug_names", [])
             ok, fail = trash_debug_files(names)
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)
 
     def _do_trash_orphaned_todo(self) -> None:
+        names = list(self._orphaned_todo_names)
         def _work():
-            names = getattr(self, "_orphaned_todo_names", [])
             ok, fail = trash_todo_files(names)
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)

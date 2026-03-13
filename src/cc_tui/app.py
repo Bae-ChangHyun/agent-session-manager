@@ -1,5 +1,7 @@
 """Main Textual application."""
 
+from pathlib import Path
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
@@ -48,9 +50,22 @@ class CCTuiApp(App):
 
     def __init__(self, target_path: str | None = None, **kwargs):
         super().__init__(**kwargs)
-        self.target_path = target_path
+        if target_path:
+            self.target_path = str(Path(target_path).resolve())
+        else:
+            self.target_path = None
+
+    @property
+    def target_encoded(self) -> str | None:
+        """Encoded project dir name for the target path."""
+        if self.target_path:
+            from cc_tui.models import encode_path
+            return encode_path(self.target_path)
+        return None
 
     def compose(self) -> ComposeResult:
+        if self.target_path:
+            self.sub_title = f"Project: {self.target_path}"
         yield Header()
         with TabbedContent(id="main-tabs"):
             with TabPane(t("tab.dashboard"), id="tab-dashboard"):

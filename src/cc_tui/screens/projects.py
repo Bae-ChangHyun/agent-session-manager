@@ -112,6 +112,9 @@ class ProjectsPane(Container):
     def _load_projects(self) -> None:
         projects = get_projects()
         orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
+        if self.app.target_path:
+            projects = [p for p in projects if p.path == self.app.target_path]
+            orphaned_sessions = []
         self.app.call_from_thread(self._build_tree, projects, orphaned_sessions)
 
     def _build_tree(self, projects: list[ProjectInfo], orphaned_sessions=None) -> None:
@@ -313,7 +316,7 @@ class ProjectsPane(Container):
         detail = (
             f"[bold]Path:[/] {p.path}\n"
             f"[bold]Status:[/] {status}\n"
-            f"[bold]Sessions:[/] {session_count}개\n"
+            f"[bold]Sessions:[/] {session_count}\n"
         )
 
         # Config 내용 표시
@@ -334,7 +337,7 @@ class ProjectsPane(Container):
                 detail += f"  MCP Servers: {', '.join(mcp.keys())}\n"
             tools = config_data.get("allowedTools", [])
             if tools:
-                detail += f"  Allowed Tools: {len(tools)}개\n"
+                detail += f"  Allowed Tools: {len(tools)}\n"
             model_usage = config_data.get("lastModelUsage", {})
             if model_usage:
                 for model, usage in model_usage.items():

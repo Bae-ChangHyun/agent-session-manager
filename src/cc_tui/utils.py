@@ -3,8 +3,10 @@
 
 def format_bytes(size: int) -> str:
     """Format byte size to human-readable string."""
-    for unit in ("B", "KB", "MB", "GB"):
+    if size < 1024:
+        return f"{size} B"
+    for unit in ("KB", "MB", "GB"):
+        size /= 1024
         if size < 1024:
             return f"{size:.1f} {unit}"
-        size /= 1024
     return f"{size:.1f} TB"

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 
 from cc_tui.models import (
     CLAUDE_DIR,
@@ -157,6 +161,7 @@ def get_session_details(project_dir: str | None = None) -> list[SessionDetail]:
     try:
         return _get_sessions_via_sdk(project_dir)
     except Exception:
+        logger.debug("SDK path failed for get_session_details, falling back to JSONL", exc_info=True)
         return _get_sessions_via_jsonl(project_dir)
 
 
@@ -394,7 +399,7 @@ def _get_active_session_ids() -> set[str]:
     return ids
 
 
-def _get_session_to_project_map() -> dict[str, str]:
+def get_session_to_project_map() -> dict[str, str]:
     """Build session_id → project_path mapping."""
     mapping: dict[str, str] = {}
     project_paths = get_project_paths()
@@ -412,23 +417,62 @@ def _get_session_to_project_map() -> dict[str, str]:
 
 
 def get_stats() -> Stats:
-    """Calculate overall statistics."""
+    """Calculate overall statistics.
+
+    Computes shared data once to avoid redundant file parsing.
+    """
     projects = get_projects()
+    project_paths = {p.path for p in projects}
     sessions = get_sessions()
-    file_history = get_file_history()
-    debug_files = get_debug_files()
-    todos = get_todos()
+
+    # Compute active session IDs once for orphan detection
+    active_ids = _get_active_session_ids()
+
+    # Count file history
+    fh_total, fh_orphaned = 0, 0
+    if FILE_HISTORY_DIR.exists():
+        try:
+            for d in FILE_HISTORY_DIR.iterdir():
+                if d.is_dir():
+                    fh_total += 1
+                    if d.name not in active_ids:
+                        fh_orphaned += 1
+        except (PermissionError, OSError):
+            pass
+
+    # Count debug files
+    db_total, db_orphaned = 0, 0
+    if DEBUG_DIR.exists():
+        try:
+            for f in DEBUG_DIR.iterdir():
+                db_total += 1
+                if f.stem not in active_ids:
+                    db_orphaned += 1
+        except (PermissionError, OSError):
+            pass
+
+    # Count todo files
+    td_total, td_orphaned = 0, 0
+    if TODOS_DIR.exists():
+        try:
+            for f in TODOS_DIR.iterdir():
+                td_total += 1
+                session_id = f.stem.split("-agent-")[0] if "-agent-" in f.stem else f.stem
+                if session_id not in active_ids:
+                    td_orphaned += 1
+        except (PermissionError, OSError):
+            pass
 
     return Stats(
         total_projects=len(projects),
         total_sessions=len(sessions),
-        total_file_history=len(file_history),
-        total_debug=len(debug_files),
-        total_todos=len(todos),
+        total_file_history=fh_total,
+        total_debug=db_total,
+        total_todos=td_total,
         orphaned_sessions=sum(1 for s in sessions if s.is_orphaned),
-        orphaned_file_history=sum(1 for f in file_history if f.is_orphaned),
-        orphaned_debug=sum(1 for d in debug_files if d.is_orphaned),
-        orphaned_todos=sum(1 for t in todos if t.is_orphaned),
+        orphaned_file_history=fh_orphaned,
+        orphaned_debug=db_orphaned,
+        orphaned_todos=td_orphaned,
         claude_dir_size=_dir_size(CLAUDE_DIR) if CLAUDE_DIR.exists() else 0,
         projects_dir_size=_dir_size(PROJECTS_DIR) if PROJECTS_DIR.exists() else 0,
     )
@@ -659,15 +703,25 @@ def get_project_sessions(project_path: str) -> list[SessionDetail]:
 
 
 def remove_project_from_json(project_path: str) -> bool:
-    """Remove a project entry from .claude.json."""
+    """Remove a project entry from .claude.json (atomic write)."""
+    import tempfile
     data = load_claude_json()
     projects = data.get("projects", {})
     if project_path in projects:
         del projects[project_path]
         data["projects"] = projects
+        tmp = None
         try:
-            CLAUDE_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            fd, tmp = tempfile.mkstemp(dir=str(CLAUDE_JSON.parent), suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, str(CLAUDE_JSON))
             return True
         except OSError:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
             return False
     return False

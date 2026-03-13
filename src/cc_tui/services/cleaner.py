@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -10,36 +12,40 @@ from send2trash import send2trash
 
 from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TODOS_DIR
 
+logger = logging.getLogger(__name__)
+
 # --- Path traversal prevention ---
 
 _ALLOWED_ROOTS = (CLAUDE_DIR,)
 
 
-def _validate_path(path: Path) -> None:
-    """Raise ValueError if path is outside allowed directories."""
+def _validate_path(path: Path) -> Path:
+    """Validate path and return resolved version. Raises ValueError if invalid."""
+    if path.is_symlink():
+        raise ValueError(f"Refusing to operate on symlink: {path}")
     resolved = path.resolve()
-    if not any(
-        resolved == root.resolve() or str(resolved).startswith(str(root.resolve()) + "/")
-        for root in _ALLOWED_ROOTS
-    ):
+    if not any(resolved.is_relative_to(root.resolve()) for root in _ALLOWED_ROOTS):
         raise ValueError(f"Path outside allowed directories: {path}")
+    return resolved
 
 
 # --- Trash logging (recovery mechanism) ---
 
 _TRASH_LOG = Path.home() / ".cc-tui" / "trash-log.jsonl"
+_log_lock = threading.Lock()
 
 
 def _log_trash(path: Path, category: str) -> None:
-    """Append a record to the trash log."""
+    """Append a record to the trash log (thread-safe)."""
     _TRASH_LOG.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": datetime.now().isoformat(),
         "path": str(path),
         "category": category,
     }
-    with open(_TRASH_LOG, "a") as f:
-        f.write(json.dumps(record) + "\n")
+    with _log_lock:
+        with open(_TRASH_LOG, "a") as f:
+            f.write(json.dumps(record) + "\n")
 
 
 # --- Trash functions ---
@@ -51,13 +57,13 @@ def trash_session(dir_name: str) -> bool:
     if not target.exists():
         return False
     try:
-        _validate_path(target)
-        # Also trash related session-env dirs
+        resolved = _validate_path(target)
         _trash_related_session_envs(dir_name)
-        _log_trash(target, "session")
-        send2trash(str(target))
+        _log_trash(resolved, "session")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash session %s: %s", dir_name, e)
         return False
 
 
@@ -79,10 +85,13 @@ def _trash_related_session_envs(dir_name: str) -> None:
     try:
         for d in SESSION_ENV_DIR.iterdir():
             if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
-                _validate_path(d)
-                _log_trash(d, "session")
-                send2trash(str(d))
-    except (PermissionError, OSError, ValueError):
+                try:
+                    resolved_d = _validate_path(d)
+                    _log_trash(resolved_d, "session-env")
+                    send2trash(str(resolved_d))
+                except (ValueError, PermissionError, OSError) as e:
+                    logger.warning("Failed to trash session-env %s: %s", d.name, e)
+    except (PermissionError, OSError):
         pass
 
 
@@ -92,11 +101,12 @@ def trash_single_session_file(project_encoded: str, session_id: str) -> bool:
     if not target.exists():
         return False
     try:
-        _validate_path(target)
-        _log_trash(target, "session")
-        send2trash(str(target))
+        resolved = _validate_path(target)
+        _log_trash(resolved, "session")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash session file %s: %s", session_id, e)
         return False
 
 
@@ -106,11 +116,12 @@ def trash_file_history(dir_name: str) -> bool:
     if not target.exists():
         return False
     try:
-        _validate_path(target)
-        _log_trash(target, "file_history")
-        send2trash(str(target))
+        resolved = _validate_path(target)
+        _log_trash(resolved, "file_history")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash file history %s: %s", dir_name, e)
         return False
 
 
@@ -131,11 +142,12 @@ def trash_debug_file(name: str) -> bool:
     if not target.exists():
         return False
     try:
-        _validate_path(target)
-        _log_trash(target, "debug")
-        send2trash(str(target))
+        resolved = _validate_path(target)
+        _log_trash(resolved, "debug")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash debug file %s: %s", name, e)
         return False
 
 
@@ -156,11 +168,12 @@ def trash_todo_file(name: str) -> bool:
     if not target.exists():
         return False
     try:
-        _validate_path(target)
-        _log_trash(target, "todo")
-        send2trash(str(target))
+        resolved = _validate_path(target)
+        _log_trash(resolved, "todo")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash todo file %s: %s", name, e)
         return False
 
 
@@ -196,11 +209,12 @@ def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int
         try:
             content = f.read_text(errors="replace").strip()
             if content in ("[]", "{}", ""):
-                _validate_path(f)
-                _log_trash(f, category)
-                send2trash(str(f))
+                resolved_f = _validate_path(f)
+                _log_trash(resolved_f, category)
+                send2trash(str(resolved_f))
                 ok += 1
-        except Exception:
+        except (ValueError, PermissionError, OSError) as e:
+            logger.warning("Failed to prune %s: %s", f.name, e)
             fail += 1
     return ok, fail
 
@@ -231,9 +245,10 @@ def trash_path(path: str | Path) -> bool:
     if not p.exists():
         return False
     try:
-        _validate_path(p)
-        _log_trash(p, "generic")
-        send2trash(str(p))
+        resolved = _validate_path(p)
+        _log_trash(resolved, "generic")
+        send2trash(str(resolved))
         return True
-    except Exception:
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash path %s: %s", path, e)
         return False

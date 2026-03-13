@@ -8,7 +8,12 @@ from pathlib import Path
 
 
 def encode_path(path: str) -> str:
-    """Encode a filesystem path to Claude's directory name format."""
+    """Encode a filesystem path to Claude's directory name format.
+
+    Note: This encoding is lossy -- different paths may produce the same encoded
+    name (e.g., /home/user/my-project and /home/user/my_project both become
+    -home-user-my-project). This matches Claude Code's own encoding scheme.
+    """
     return re.sub(r"[^a-zA-Z0-9]", "-", path)
 
 

@@ -145,20 +145,26 @@ def migrate_sessions(
     )
 
 
-def _replace_in_obj(obj: object, old: str, new: str) -> None:
-    """Recursively replace string values in a JSON-like object."""
+_PATH_FIELDS = {"cwd", "projectPath", "path", "directory", "projectDir", "workingDirectory"}
+
+
+def _replace_in_obj(obj: object, old: str, new: str, restrict_keys: bool = True) -> None:
+    """Recursively replace string values in a JSON-like object.
+
+    When restrict_keys is True, only replaces values in known path-containing
+    fields to avoid corrupting message content.
+    """
     if isinstance(obj, dict):
         for k, v in obj.items():
             if isinstance(v, str) and old in v:
-                obj[k] = v.replace(old, new)
+                if not restrict_keys or k in _PATH_FIELDS:
+                    obj[k] = v.replace(old, new)
             elif isinstance(v, (dict, list)):
-                _replace_in_obj(v, old, new)
+                _replace_in_obj(v, old, new, restrict_keys)
     elif isinstance(obj, list):
         for i, item in enumerate(obj):
-            if isinstance(item, str) and old in item:
-                obj[i] = item.replace(old, new)
-            elif isinstance(item, (dict, list)):
-                _replace_in_obj(item, old, new)
+            if isinstance(item, (dict, list)):
+                _replace_in_obj(item, old, new, restrict_keys)
 
 
 def _update_paths(
@@ -182,7 +188,7 @@ def _update_paths(
                 try:
                     obj = json.loads(line)
                     before = json.dumps(obj, ensure_ascii=False)
-                    _replace_in_obj(obj, source_path, target_path)
+                    _replace_in_obj(obj, source_path, target_path, restrict_keys=True)
                     after = json.dumps(obj, ensure_ascii=False)
                     updated.append(after)
                     if before != after:
@@ -199,8 +205,8 @@ def _update_paths(
     if idx.exists():
         try:
             data = json.loads(idx.read_text())
-            _replace_in_obj(data, source_path, target_path)
-            _replace_in_obj(data, source_encoded, target_encoded)
+            _replace_in_obj(data, source_path, target_path, restrict_keys=False)
+            _replace_in_obj(data, source_encoded, target_encoded, restrict_keys=False)
             idx.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except (OSError, json.JSONDecodeError):
             pass

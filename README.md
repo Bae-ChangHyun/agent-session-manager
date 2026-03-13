@@ -2,8 +2,6 @@
 
 <div align="center">
 
-![Logo](https://via.placeholder.com/150?text=CC-TUI)
-
 **Claude Code 데이터를 터미널에서 한눈에 관리하세요**<br/>
 사용량 통계, 세션 정리, 백업/복원까지 — Textual 기반 TUI 앱
 
@@ -28,45 +26,6 @@
 
 ---
 
-## 스크린샷
-
-<div align="center">
-  <img src="https://via.placeholder.com/900x550?text=Dashboard+Screenshot" alt="대시보드" width="900"/>
-  <br/>
-  <em>대시보드 - 총 비용, 모델별 사용량, 프로젝트별 비용 Top 10</em>
-</div>
-
-<details>
-<summary><strong>더 많은 화면 보기</strong></summary>
-
-<br/>
-
-<div align="center">
-  <img src="https://via.placeholder.com/900x550?text=Projects+Screen" alt="프로젝트 관리" width="900"/>
-  <br/>
-  <em>프로젝트 관리 - 세션 트리, 대화 내용 미리보기</em>
-</div>
-
-<br/>
-
-<div align="center">
-  <img src="https://via.placeholder.com/900x550?text=Debug+Todos+Screen" alt="Debug/Todos" width="900"/>
-  <br/>
-  <em>Debug/Todos - 파일 내용 미리보기, orphaned 정리</em>
-</div>
-
-<br/>
-
-<div align="center">
-  <img src="https://via.placeholder.com/900x550?text=Backups+Screen" alt="백업 관리" width="900"/>
-  <br/>
-  <em>백업 관리 - 설정/전체 백업 생성, 복원, 삭제</em>
-</div>
-
-</details>
-
----
-
 ## 주요 기능
 
 ### 대시보드
@@ -83,6 +42,7 @@
 - 존재하지 않는 프로젝트(폴더 삭제/이동됨) 시각적 구분
 - 개별 세션 삭제 (휴지통 이동), 설정에서 프로젝트 제거
 - Orphaned 세션 디렉토리 일괄 감지 및 정리
+- `--path` 옵션으로 특정 프로젝트만 필터링하여 관리
 
 ### 파일 히스토리
 
@@ -108,11 +68,18 @@
 - 설정 백업: `.claude.json` 파일만 빠르게 백업
 - 전체 백업: `~/.claude` 디렉토리 전체 복사
 - 백업 목록 조회, 복원(복원 전 현재 설정 자동 백업), 삭제
+- 복원 실패 시 자동 롤백으로 데이터 손실 방지
+
+### 안전성
+
+- 모든 삭제 작업은 OS 휴지통으로 이동 (`send2trash`)
+- 삭제 이력을 `~/.cc-tui/trash-log.jsonl`에 기록하여 추적 가능
+- 경로 검증(allowlist 기반)으로 의도하지 않은 파일 삭제 방지
+- 복원 시 rename+rollback 패턴으로 실패 시 원본 보존
 
 ### 기타
 
 - 한국어 / 영어 UI 지원 (i18n)
-- 삭제는 모두 휴지통 이동 방식으로 안전하게 처리 (`send2trash`)
 - `r` 키로 전체 데이터 새로고침
 
 ---
@@ -124,10 +91,16 @@
 - Python 3.11 이상
 - [uv](https://github.com/astral-sh/uv) (권장) 또는 pip
 
-### uv로 설치 (권장)
+### PyPI에서 설치
 
 ```bash
-git clone https://github.com/[User]/cc-tui.git
+pip install cc-tui
+```
+
+### 소스에서 설치 (개발용)
+
+```bash
+git clone https://github.com/bch/cc-tui.git
 cd cc-tui
 uv sync
 ```
@@ -136,7 +109,7 @@ uv sync
 <summary><strong>pip으로 설치</strong></summary>
 
 ```bash
-git clone https://github.com/[User]/cc-tui.git
+git clone https://github.com/bch/cc-tui.git
 cd cc-tui
 python -m venv .venv
 source .venv/bin/activate
@@ -152,17 +125,17 @@ pip install -e .
 ### 기본 실행
 
 ```bash
-# uv 사용 시
-uv run cc-tui
-
-# 가상환경 활성화 후
+# PyPI 설치 시
 cc-tui
+
+# 소스에서 실행 시
+uv run cc-tui
 ```
 
 ### 옵션
 
 ```bash
-# 특정 프로젝트 경로 지정
+# 특정 프로젝트만 필터링하여 표시
 cc-tui --path /your/project/path
 
 # 언어 설정 (기본값: en)
@@ -184,8 +157,6 @@ CC_TUI_LANG=ko cc-tui
 | `D` | Orphaned 전체 삭제 |
 | `Space` | 다중 선택 토글 |
 
-> 화면별 전체 단축키는 [docs/keybindings.md](docs/keybindings.md)를 참고하세요.
-
 ---
 
 ## 프로젝트 구조
@@ -198,6 +169,7 @@ cc-tui/
 │       ├── app.py               # Textual 앱, 탭 구성
 │       ├── i18n.py              # 다국어 지원 (한국어/영어)
 │       ├── models.py            # 데이터 모델, 경로 상수
+│       ├── utils.py             # 공통 유틸리티 (format_bytes 등)
 │       ├── screens/
 │       │   ├── dashboard.py     # 대시보드 (사용량/비용 통계)
 │       │   ├── projects.py      # 프로젝트/세션 관리 트리
@@ -205,14 +177,16 @@ cc-tui/
 │       │   ├── debug_todos.py   # Debug/Todos 파일 관리
 │       │   ├── migrate.py       # 세션 마이그레이션
 │       │   ├── backups.py       # 백업/복원
-│       │   ├── orphaned.py      # Orphaned 데이터 뷰
 │       │   └── confirm.py       # 확인 다이얼로그
-│       └── services/
-│           ├── claude_data.py   # Claude 데이터 파싱/조회
-│           ├── backup.py        # 백업/복원 로직
-│           ├── cleaner.py       # 파일 삭제(휴지통 이동)
-│           └── migrate.py       # 세션 마이그레이션 로직
+│       ├── services/
+│       │   ├── claude_data.py   # Claude 데이터 파싱/조회
+│       │   ├── backup.py        # 백업/복원 로직
+│       │   ├── cleaner.py       # 파일 삭제(휴지통 이동)
+│       │   └── migrate.py       # 세션 마이그레이션 로직
+│       └── widgets/
+│           └── action_bar.py    # 재사용 액션 바 위젯
 ├── pyproject.toml
+├── LICENSE
 └── README.md
 ```
 
@@ -241,6 +215,7 @@ cc-tui/
 | `~/.claude/debug/` | Claude Code 내부 디버그 로그 |
 | `~/.claude/todos/` | 세션 중 생성된 내부 투두 메모 |
 | `~/.cc-tui/backups/` | cc-tui가 생성한 백업 파일 |
+| `~/.cc-tui/trash-log.jsonl` | 삭제 이력 로그 |
 
 ---
 
@@ -251,22 +226,13 @@ cc-tui/
 ### 개발 환경 설정
 
 ```bash
-git clone https://github.com/[User]/cc-tui.git
+git clone https://github.com/bch/cc-tui.git
 cd cc-tui
 uv sync
 uv run cc-tui
 ```
 
-### 기여 방법
-
-1. 이 저장소를 포크합니다.
-2. 기능 브랜치를 생성합니다: `git checkout -b feat/my-feature`
-3. 변경사항을 커밋합니다: `git commit -m "feat: 새 기능 추가"`
-4. 브랜치에 푸시합니다: `git push origin feat/my-feature`
-5. Pull Request를 생성합니다.
-
-<details>
-<summary><strong>커밋 메시지 컨벤션</strong></summary>
+### 커밋 메시지 컨벤션
 
 ```
 feat:     새 기능 추가
@@ -275,8 +241,6 @@ docs:     문서 수정
 refactor: 리팩토링
 chore:    기타 작업
 ```
-
-</details>
 
 ---
 

@@ -8,7 +8,7 @@ from textual.widgets import DataTable, Static
 
 from cc_tui.models import decode_path_hint, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_file_history, get_project_paths, _get_session_to_project_map
+from cc_tui.services.claude_data import get_file_history, get_project_paths, get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import trash_file_history, trash_file_histories
 from cc_tui.widgets.action_bar import ActionBar
@@ -84,6 +84,7 @@ class FileHistoryPane(Container):
                 )
 
     def on_mount(self) -> None:
+        self._entries: dict = {}
         table = self.query_one("#fh-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
@@ -102,7 +103,10 @@ class FileHistoryPane(Container):
         entries = get_file_history()
         project_paths = get_project_paths()
         encoded_to_path = {encode_path(p): p for p in project_paths}
-        session_to_project = _get_session_to_project_map()
+        if self.app.target_path:
+            target_enc = self.app.target_encoded
+            entries = [e for e in entries if e.dir_name == target_enc]
+        session_to_project = get_session_to_project_map()
         self.app.call_from_thread(self._update_table, entries, encoded_to_path, session_to_project)
 
     def _update_table(self, entries, encoded_to_path: dict, session_to_project: dict = None) -> None:
@@ -269,14 +273,17 @@ class FileHistoryPane(Container):
     def _do_trash_bulk(self, names: list[str]) -> None:
         def _work():
             ok, fail = trash_file_histories(names)
-            self._selected.clear()
-            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
-            self.app.call_from_thread(self.refresh_data)
+            self.app.call_from_thread(self._on_bulk_done, ok, fail)
         self.run_worker(_work, thread=True)
 
+    def _on_bulk_done(self, ok: int, fail: int) -> None:
+        self._selected.clear()
+        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
+        self.refresh_data()
+
     def _do_trash_orphaned(self) -> None:
+        names = list(self._orphaned_fh_names)
         def _work():
-            names = getattr(self, "_orphaned_fh_names", [])
             ok, fail = trash_file_histories(names)
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)

@@ -131,8 +131,9 @@ class DashboardPane(Container):
         if not stats or not usage:
             return
 
+        title = f"[bold]CC-TUI[/]  [dim]Filter:[/] {self.app.target_path}" if self.app.target_path else "[bold]CC-TUI[/]  Claude Code Session Manager"
         self.query_one("#dash-header", Static).update(
-            f"[bold]CC-TUI[/]  Claude Code Session Manager\n"
+            f"{title}\n"
             f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
             f"{usage['num_startups']} startups  |  "
             f"{usage['total_sessions_ever']} total sessions[/]"
@@ -211,20 +212,21 @@ class DashboardPane(Container):
         else:
             pt.add_row(t("dash.no_data"), "", "", "", "", "")
 
+    _PERIOD_LABELS = [("daily", 8), ("weekly", 9), ("monthly", 10)]
+
     def on_click(self, event) -> None:
         """Handle period tab clicks - load on first click, cache after."""
         widget = event.widget
         if getattr(widget, "id", "") != "period-tabs":
             return
-        # Determine which tab was clicked based on x position in the text
-        # Layout: " Daily   Weekly   Monthly "
         x = event.x
-        if x < 10:
-            key = "daily"
-        elif x < 20:
-            key = "weekly"
-        else:
-            key = "monthly"
+        pos = 1
+        key = "monthly"  # default to last
+        for label, width in self._PERIOD_LABELS:
+            if x < pos + width:
+                key = label
+                break
+            pos += width + 2
         self._period = key
         if key in self._cached_periods:
             self._render_period_section()
