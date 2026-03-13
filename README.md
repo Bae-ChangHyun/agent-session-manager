@@ -176,10 +176,15 @@ CC_TUI_LANG=ko cc-tui
 
 | 키 | 동작 |
 |:---:|:---|
+| `F1`~`F6` | 탭 전환 (Dashboard → Backups) |
 | `q` | 앱 종료 |
 | `r` | 전체 데이터 새로고침 |
-| `Tab` | 탭 전환 |
-| 화살표 키 | 목록 탐색 |
+| `↑`/`↓` | 목록 탐색 |
+| `d` | 선택 항목 삭제 |
+| `D` | Orphaned 전체 삭제 |
+| `Space` | 다중 선택 토글 |
+
+> 화면별 전체 단축키는 [docs/keybindings.md](docs/keybindings.md)를 참고하세요.
 
 ---
 
