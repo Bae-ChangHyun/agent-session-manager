@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TODOS_DIR
+from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TODOS_DIR
+
+# --- Path traversal prevention ---
+
+_ALLOWED_ROOTS = (CLAUDE_DIR, Path.home() / ".cc-tui")
+
+
+def _validate_path(path: Path) -> None:
+    """Raise ValueError if path is outside allowed directories."""
+    resolved = path.resolve()
+    if not any(
+        resolved == root.resolve() or str(resolved).startswith(str(root.resolve()) + "/")
+        for root in _ALLOWED_ROOTS
+    ):
+        raise ValueError(f"Path outside allowed directories: {path}")
+
+
+# --- Trash logging (recovery mechanism) ---
+
+_TRASH_LOG = Path.home() / ".cc-tui" / "trash-log.jsonl"
+
+
+def _log_trash(path: Path, category: str) -> None:
+    """Append a record to the trash log."""
+    _TRASH_LOG.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now().isoformat(),
+        "path": str(path),
+        "category": category,
+    }
+    with open(_TRASH_LOG, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+# --- Trash functions ---
 
 
 def trash_session(dir_name: str) -> bool:
@@ -15,8 +51,10 @@ def trash_session(dir_name: str) -> bool:
     if not target.exists():
         return False
     try:
+        _validate_path(target)
         # Also trash related session-env dirs
         _trash_related_session_envs(dir_name)
+        _log_trash(target, "session")
         send2trash(str(target))
         return True
     except Exception:
@@ -41,8 +79,10 @@ def _trash_related_session_envs(dir_name: str) -> None:
     try:
         for d in SESSION_ENV_DIR.iterdir():
             if d.is_dir() and dir_name in d.name:
+                _validate_path(d)
+                _log_trash(d, "session")
                 send2trash(str(d))
-    except (PermissionError, OSError):
+    except (PermissionError, OSError, ValueError):
         pass
 
 
@@ -52,6 +92,8 @@ def trash_single_session_file(project_encoded: str, session_id: str) -> bool:
     if not target.exists():
         return False
     try:
+        _validate_path(target)
+        _log_trash(target, "session")
         send2trash(str(target))
         return True
     except Exception:
@@ -64,6 +106,8 @@ def trash_file_history(dir_name: str) -> bool:
     if not target.exists():
         return False
     try:
+        _validate_path(target)
+        _log_trash(target, "file_history")
         send2trash(str(target))
         return True
     except Exception:
@@ -87,6 +131,8 @@ def trash_debug_file(name: str) -> bool:
     if not target.exists():
         return False
     try:
+        _validate_path(target)
+        _log_trash(target, "debug")
         send2trash(str(target))
         return True
     except Exception:
@@ -110,6 +156,8 @@ def trash_todo_file(name: str) -> bool:
     if not target.exists():
         return False
     try:
+        _validate_path(target)
+        _log_trash(target, "todo")
         send2trash(str(target))
         return True
     except Exception:
@@ -129,15 +177,15 @@ def trash_todo_files(names: list[str]) -> tuple[int, int]:
 
 def prune_empty_debug_files() -> tuple[int, int]:
     """Find and trash empty debug files ([], {}, or empty content)."""
-    return _prune_empty_in_dir(DEBUG_DIR)
+    return _prune_empty_in_dir(DEBUG_DIR, "debug")
 
 
 def prune_empty_todo_files() -> tuple[int, int]:
     """Find and trash empty todo files ([], {}, or empty content)."""
-    return _prune_empty_in_dir(TODOS_DIR)
+    return _prune_empty_in_dir(TODOS_DIR, "todo")
 
 
-def _prune_empty_in_dir(directory: Path) -> tuple[int, int]:
+def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int, int]:
     """Trash files whose content is [], {}, or empty."""
     if not directory.exists():
         return 0, 0
@@ -148,6 +196,8 @@ def _prune_empty_in_dir(directory: Path) -> tuple[int, int]:
         try:
             content = f.read_text(errors="replace").strip()
             if content in ("[]", "{}", ""):
+                _validate_path(f)
+                _log_trash(f, category)
                 send2trash(str(f))
                 ok += 1
         except Exception:
@@ -181,6 +231,8 @@ def trash_path(path: str | Path) -> bool:
     if not p.exists():
         return False
     try:
+        _validate_path(p)
+        _log_trash(p, "generic")
         send2trash(str(p))
         return True
     except Exception:

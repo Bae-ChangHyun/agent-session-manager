@@ -145,6 +145,22 @@ def migrate_sessions(
     )
 
 
+def _replace_in_obj(obj: object, old: str, new: str) -> None:
+    """Recursively replace string values in a JSON-like object."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str) and old in v:
+                obj[k] = v.replace(old, new)
+            elif isinstance(v, (dict, list)):
+                _replace_in_obj(v, old, new)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, str) and old in item:
+                obj[i] = item.replace(old, new)
+            elif isinstance(item, (dict, list)):
+                _replace_in_obj(item, old, new)
+
+
 def _update_paths(
     target_dir: Path,
     source_path: str,
@@ -153,22 +169,32 @@ def _update_paths(
     target_encoded: str,
 ) -> None:
     """Update path references in migrated files."""
-    # Update JSONL files
+    # Update JSONL files - parse each line as JSON to avoid partial matches
     for jsonl in target_dir.glob("*.jsonl"):
         try:
-            content = jsonl.read_text()
-            content = content.replace(source_path, target_path)
-            jsonl.write_text(content)
+            lines = jsonl.read_text().splitlines()
+            updated = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    _replace_in_obj(obj, source_path, target_path)
+                    updated.append(json.dumps(obj, ensure_ascii=False))
+                except json.JSONDecodeError:
+                    updated.append(line)
+            jsonl.write_text("\n".join(updated) + "\n")
         except OSError:
             pass
 
-    # Update sessions-index.json
+    # sessions-index.json - parse as JSON, not string replace
     idx = target_dir / "sessions-index.json"
     if idx.exists():
         try:
-            content = idx.read_text()
-            content = content.replace(source_path, target_path)
-            content = content.replace(source_encoded, target_encoded)
-            idx.write_text(content)
-        except OSError:
+            data = json.loads(idx.read_text())
+            _replace_in_obj(data, source_path, target_path)
+            _replace_in_obj(data, source_encoded, target_encoded)
+            idx.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        except (OSError, json.JSONDecodeError):
             pass

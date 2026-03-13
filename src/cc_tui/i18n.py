@@ -20,8 +20,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
     # Confirm dialog
-    "confirm.yes": {"en": "Confirm", "ko": "확인"},
-    "confirm.no": {"en": "Cancel", "ko": "취소"},
+    "confirm.yes": {"en": "Confirm (y)", "ko": "확인 (y)"},
+    "confirm.no": {"en": "Cancel (n)", "ko": "취소 (n)"},
+    "confirm.bulk_delete": {
+        "en": "Delete {count} selected {type}?",
+        "ko": "선택한 {count}개 {type}를 삭제하시겠습니까?",
+    },
+    "confirm.group_delete": {
+        "en": "Delete {count} {type} in this group?",
+        "ko": "이 그룹의 {count}개 {type}를 삭제하시겠습니까?",
+    },
     # ── Dashboard ──
     "dash.loading": {"en": "Loading dashboard data...", "ko": "대시보드 데이터 로딩 중..."},
     "dash.total_cost": {"en": "Total Cost", "ko": "총 비용"},
@@ -79,6 +87,31 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "proj.confirm_trash_orphaned": {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",
         "ko": "Orphaned 세션 디렉토리를 모두 삭제?\n\n매칭 프로젝트 없는 {count}개.\n[dim]휴지통으로 이동, 복구 가능[/]",
+    },
+    # ── File History ── detail panel status descriptions
+    "fh.status_orphaned_desc": {
+        "en": (
+            "[yellow bold]Orphaned[/]\n"
+            "[dim]Session deleted, no matching project.\n"
+            "Safe to delete.[/]"
+        ),
+        "ko": (
+            "[yellow bold]Orphaned[/]\n"
+            "[dim]세션이 삭제되어 매칭되지 않습니다.\n"
+            "안전하게 삭제 가능합니다.[/]"
+        ),
+    },
+    "fh.status_active_desc": {
+        "en": (
+            "[green bold]Active[/]\n"
+            "[dim]Connected to a current project.\n"
+            "Deleting will disable file rollback for this project.[/]"
+        ),
+        "ko": (
+            "[green bold]Active[/]\n"
+            "[dim]현재 프로젝트와 연결되어 있습니다.\n"
+            "삭제 시 해당 프로젝트의 파일 되돌리기 기능을 사용할 수 없습니다.[/]"
+        ),
     },
     # ── File History ──
     "fh.info": {

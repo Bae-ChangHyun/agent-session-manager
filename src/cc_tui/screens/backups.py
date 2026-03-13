@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import DataTable, Static
@@ -17,14 +16,8 @@ from cc_tui.services.backup import (
     restore_config_backup,
     restore_full_backup,
 )
-
-
-def _format_bytes(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from cc_tui.utils import format_bytes
+from cc_tui.widgets.action_bar import ActionBar
 
 
 class BackupsPane(Container):
@@ -61,7 +54,7 @@ class BackupsPane(Container):
             t("bak.info"),
             id="backups-info",
         )
-        yield Static("", id="backup-actions")
+        yield ActionBar(id="backup-actions")
         yield DataTable(id="backups-table")
 
     def on_mount(self) -> None:
@@ -69,7 +62,6 @@ class BackupsPane(Container):
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns("Name", "Created", "Size", "Path")
-        self._action_map = []
         self._render_actions()
         self.refresh_data()
 
@@ -80,19 +72,8 @@ class BackupsPane(Container):
             ("restore", t("bak.btn_restore"), "#4EBF71"),
             ("delete", t("bak.btn_delete"), "#ba3c5b"),
         ]
-        parts = []
-        click_map = []
-        x = 0
-        for i, (action_id, label, color) in enumerate(actions):
-            text = f" {label} "
-            width = cell_len(text)
-            click_map.append((x, x + width, action_id))
-            parts.append(f"[bold white on {color}]{text}[/]")
-            x += width
-            if i < len(actions) - 1:
-                x += 2
-        self._action_map = click_map
-        self.query_one("#backup-actions", Static).update("  ".join(parts))
+        bar = self.query_one("#backup-actions", ActionBar)
+        bar.set_actions(actions, on_action=self._handle_action)
 
     def refresh_data(self) -> None:
         self.run_worker(self._load, thread=True)
@@ -107,7 +88,7 @@ class BackupsPane(Container):
         self._backups = {b.name: b for b in backups}
         for b in backups:
             created = datetime.fromtimestamp(b.created).strftime("%Y-%m-%d %H:%M:%S") if b.created else "N/A"
-            table.add_row(b.name, created, _format_bytes(b.size_bytes), b.path, key=b.name)
+            table.add_row(b.name, created, format_bytes(b.size_bytes), b.path, key=b.name)
 
     def _get_selected_backup(self):
         table = self.query_one("#backups-table", DataTable)
@@ -127,15 +108,6 @@ class BackupsPane(Container):
 
     def action_delete_backup(self) -> None:
         self._handle_action("delete")
-
-    def on_click(self, event) -> None:
-        """Handle action bar clicks."""
-        if getattr(event.widget, "id", "") != "backup-actions":
-            return
-        for start, end, action_id in self._action_map:
-            if start <= event.x < end:
-                self._handle_action(action_id)
-                break
 
     def _handle_action(self, action_id: str) -> None:
         if action_id == "config-backup":
@@ -179,19 +151,23 @@ class BackupsPane(Container):
         self.app.call_from_thread(self.refresh_data)
 
     def _do_restore(self, backup, is_full: bool) -> None:
-        if is_full:
-            ok = restore_full_backup(backup.path)
-        else:
-            ok = restore_config_backup(backup.path)
-        if ok:
-            self.app.notify(f"Restored: {backup.name}")
-        else:
-            self.app.notify("Restore failed", severity="error")
-        self.refresh_data()
+        def _work():
+            if is_full:
+                ok = restore_full_backup(backup.path)
+            else:
+                ok = restore_config_backup(backup.path)
+            if ok:
+                self.app.call_from_thread(self.app.notify, f"Restored: {backup.name}")
+            else:
+                self.app.call_from_thread(self.app.notify, "Restore failed", severity="error")
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_delete(self, backup) -> None:
-        if delete_backup(backup.path):
-            self.app.notify(f"Deleted: {backup.name}")
-        else:
-            self.app.notify("Delete failed", severity="error")
-        self.refresh_data()
+        def _work():
+            if delete_backup(backup.path):
+                self.app.call_from_thread(self.app.notify, f"Deleted: {backup.name}")
+            else:
+                self.app.call_from_thread(self.app.notify, "Delete failed", severity="error")
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)

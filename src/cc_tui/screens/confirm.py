@@ -58,10 +58,8 @@ class ConfirmScreen(ModalScreen[bool]):
         self._render_bar()
 
     def _render_bar(self) -> None:
-        yes_label = t("confirm.yes")
-        no_label = t("confirm.no")
-        yes_text = f" {yes_label} (y) "
-        no_text = f" {no_label} (n) "
+        yes_text = f" {t('confirm.yes')} "
+        no_text = f" {t('confirm.no')} "
         yes_w = cell_len(yes_text)
         no_w = cell_len(no_text)
         gap = 4

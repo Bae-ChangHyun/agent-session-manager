@@ -111,8 +111,8 @@ def restore_full_backup(backup_path: str) -> bool:
     if not src.exists():
         return False
     try:
-        # Create a backup of current first
-        create_config_backup()
+        # Create FULL backup of current state before restoring (not just config)
+        create_full_backup()
 
         claude_backup = src / ".claude"
         json_backup = src / ".claude.json"

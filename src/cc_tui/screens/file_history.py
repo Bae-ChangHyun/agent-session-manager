@@ -2,7 +2,6 @@
 
 import re
 
-from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Static
@@ -12,16 +11,9 @@ from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.claude_data import get_file_history, get_project_paths, _get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import trash_file_history, trash_file_histories
+from cc_tui.widgets.action_bar import ActionBar
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-
-def _format_bytes(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
 
 
 def _display_name(dir_name: str, encoded_to_path: dict) -> str:
@@ -84,7 +76,7 @@ class FileHistoryPane(Container):
         with Horizontal(id="fh-layout"):
             with Vertical(id="fh-list-panel"):
                 yield DataTable(id="fh-table")
-                yield Static("", id="fh-actions")
+                yield ActionBar(id="fh-actions")
             with Vertical(id="fh-detail-panel"):
                 yield VerticalScroll(
                     Static(t("fh.select_hint"), id="fh-detail-body"),
@@ -98,7 +90,6 @@ class FileHistoryPane(Container):
         table.styles.height = "1fr"
         table.add_columns("Project / Session", "Status")
         self._orphaned_fh_names = []
-        self._action_map = []
         self._selected: set[str] = set()
         self._row_display: dict[str, str] = {}
         self._group_items: dict[str, list[str]] = {}
@@ -182,26 +173,15 @@ class FileHistoryPane(Container):
         self._render_actions()
 
     def _render_actions(self) -> None:
-        """Render action bar with click-mapped Rich markup buttons."""
+        """Render action bar with clickable buttons."""
         sel = len(self._selected)
         trash_label = t("fh.btn_trash") + (f" ({sel})" if sel else "")
         actions = [("trash-selected", trash_label, "#e8890c")]
         count = len(getattr(self, "_orphaned_fh_names", []))
         if count > 0:
             actions.append(("trash-orphaned", t("fh.btn_trash_orphaned", count=count), "#ba3c5b"))
-        parts = []
-        click_map = []
-        x = 0
-        for i, (action_id, label, color) in enumerate(actions):
-            text = f" {label} "
-            width = cell_len(text)
-            click_map.append((x, x + width, action_id))
-            parts.append(f"[bold white on {color}]{text}[/]")
-            x += width
-            if i < len(actions) - 1:
-                x += 2
-        self._action_map = click_map
-        self.query_one("#fh-actions", Static).update("  ".join(parts))
+        bar = self.query_one("#fh-actions", ActionBar)
+        bar.set_actions(actions, on_action=self._handle_action)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if not event.row_key or event.row_key.value.startswith("__hdr_"):
@@ -214,17 +194,9 @@ class FileHistoryPane(Container):
             project = self._session_to_project.get(e.dir_name)
 
             if e.is_orphaned:
-                status_msg = (
-                    "[yellow bold]Orphaned[/]\n"
-                    "[dim]세션이 삭제되어 매칭되지 않습니다.\n"
-                    "안전하게 삭제 가능합니다.[/]"
-                )
+                status_msg = t("fh.status_orphaned_desc")
             else:
-                status_msg = (
-                    "[green bold]Active[/]\n"
-                    "[dim]현재 프로젝트와 연결되어 있습니다.\n"
-                    "삭제 시 해당 프로젝트의 파일 되돌리기 기능을 사용할 수 없습니다.[/]"
-                )
+                status_msg = t("fh.status_active_desc")
 
             detail = f"[bold]Session ID:[/]\n  [dim]{e.dir_name}[/]\n\n"
             if project:
@@ -232,24 +204,19 @@ class FileHistoryPane(Container):
             detail += f"[bold]Status:[/] {status_msg}"
             body.update(detail)
 
-    def on_click(self, event) -> None:
-        """Handle action bar clicks."""
-        if getattr(event.widget, "id", "") != "fh-actions":
-            return
-        for start, end, action_id in self._action_map:
-            if start <= event.x < end:
-                if action_id == "trash-selected":
-                    self._click_trash_selected()
-                elif action_id == "trash-orphaned":
-                    self._click_trash_orphaned()
-                break
+    def _handle_action(self, action_id: str) -> None:
+        """Handle action bar button clicks."""
+        if action_id == "trash-selected":
+            self._click_trash_selected()
+        elif action_id == "trash-orphaned":
+            self._click_trash_orphaned()
 
     def _click_trash_selected(self) -> None:
         # Multi-select mode
         if self._selected:
             names = list(self._selected)
             self.app.push_screen(
-                ConfirmScreen(f"선택한 {len(names)}개 file history를 삭제하시겠습니까?"),
+                ConfirmScreen(t("confirm.bulk_delete", count=len(names), type="file history")),
                 callback=lambda ok, ns=names: self._do_trash_bulk(ns) if ok else None,
             )
             return
@@ -262,7 +229,7 @@ class FileHistoryPane(Container):
                 items = self._group_items.get(name, [])
                 if items:
                     self.app.push_screen(
-                        ConfirmScreen(f"이 그룹의 {len(items)}개 file history를 삭제하시겠습니까?"),
+                        ConfirmScreen(t("confirm.group_delete", count=len(items), type="file history")),
                         callback=lambda ok, ns=items: self._do_trash_bulk(ns) if ok else None,
                     )
                 return
@@ -285,11 +252,13 @@ class FileHistoryPane(Container):
         )
 
     def _do_trash(self, name: str) -> None:
-        if trash_file_history(name):
-            self.app.notify(t("common.trashed", name=name))
-            self.refresh_data()
-        else:
-            self.app.notify(t("common.failed"), severity="error")
+        def _work():
+            if trash_file_history(name):
+                self.app.call_from_thread(self.app.notify, t("common.trashed", name=name))
+            else:
+                self.app.call_from_thread(self.app.notify, t("common.failed"), severity="error")
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def action_trash_selected(self) -> None:
         self._click_trash_selected()
@@ -298,13 +267,17 @@ class FileHistoryPane(Container):
         self._click_trash_orphaned()
 
     def _do_trash_bulk(self, names: list[str]) -> None:
-        ok, fail = trash_file_histories(names)
-        self._selected.clear()
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            ok, fail = trash_file_histories(names)
+            self._selected.clear()
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_trash_orphaned(self) -> None:
-        names = getattr(self, "_orphaned_fh_names", [])
-        ok, fail = trash_file_histories(names)
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            names = getattr(self, "_orphaned_fh_names", [])
+            ok, fail = trash_file_histories(names)
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)

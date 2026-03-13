@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Static
@@ -20,14 +19,8 @@ from cc_tui.services.cleaner import (
     trash_todo_file,
     trash_todo_files,
 )
-
-
-def _format_bytes(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from cc_tui.utils import format_bytes
+from cc_tui.widgets.action_bar import ActionBar
 
 
 class DebugTodosPane(Container):
@@ -91,11 +84,11 @@ class DebugTodosPane(Container):
                 with Vertical(classes="dt-section"):
                     yield Static("", classes="section-title", id="debug-title")
                     yield DataTable(id="debug-table")
-                    yield Static("", id="debug-actions", classes="dt-action-bar")
+                    yield ActionBar(id="debug-actions", classes="dt-action-bar")
                 with Vertical(classes="dt-section"):
                     yield Static("", classes="section-title", id="todo-title")
                     yield DataTable(id="todo-table")
-                    yield Static("", id="todo-actions", classes="dt-action-bar")
+                    yield ActionBar(id="todo-actions", classes="dt-action-bar")
             with Vertical(id="dt-preview-panel"):
                 yield Static("[bold]Content Preview[/]", id="dt-preview-header")
                 yield VerticalScroll(
@@ -116,8 +109,6 @@ class DebugTodosPane(Container):
         tt.styles.height = "1fr"
         tt.add_columns("Name", "Size", "Status")
 
-        self._debug_action_map = []
-        self._todo_action_map = []
         self._orphaned_debug_names = []
         self._orphaned_todo_names = []
         self._empty_debug = 0
@@ -226,7 +217,7 @@ class DebugTodosPane(Container):
                 row_display[e.name] = display
                 table.add_row(
                     f"  {display}",
-                    _format_bytes(e.size_bytes),
+                    format_bytes(e.size_bytes),
                     t("common.orphaned"),
                     key=e.name,
                 )
@@ -238,7 +229,7 @@ class DebugTodosPane(Container):
             hdr = f"__hdr_{project}__"
             table.add_row(
                 f"[bold cyan]── {project} ({len(items)})[/]",
-                f"[dim]{_format_bytes(total_size)}[/]", "",
+                f"[dim]{format_bytes(total_size)}[/]", "",
                 key=hdr,
             )
             group_items[hdr] = [e.name for e in items]
@@ -247,30 +238,12 @@ class DebugTodosPane(Container):
                 row_display[e.name] = display
                 table.add_row(
                     f"  {display}",
-                    _format_bytes(e.size_bytes),
+                    format_bytes(e.size_bytes),
                     t("common.active"),
                     key=e.name,
                 )
 
         return group_items, row_display
-
-    def _build_action_bar(self, actions):
-        """Build Rich markup action bar and click map.
-
-        actions: list of (action_id, label, color)
-        """
-        parts = []
-        click_map = []
-        x = 0
-        for i, (action_id, label, color) in enumerate(actions):
-            text = f" {label} "
-            width = cell_len(text)
-            click_map.append((x, x + width, action_id))
-            parts.append(f"[bold white on {color}]{text}[/]")
-            x += width
-            if i < len(actions) - 1:
-                x += 2
-        return "  ".join(parts), click_map
 
     def action_toggle_select(self) -> None:
         """Toggle selection on the current row (spacebar)."""
@@ -345,9 +318,8 @@ class DebugTodosPane(Container):
             actions.append(("prune-debug", t("dt.btn_prune_debug", count=self._empty_debug), "#0178d4"))
         if len(self._orphaned_debug_names) > 0:
             actions.append(("trash-orphaned-debug", t("dt.btn_trash_orphaned_debug", count=len(self._orphaned_debug_names)), "#ba3c5b"))
-        markup, click_map = self._build_action_bar(actions)
-        self._debug_action_map = click_map
-        self.query_one("#debug-actions", Static).update(markup)
+        bar = self.query_one("#debug-actions", ActionBar)
+        bar.set_actions(actions, on_action=self._handle_action)
 
     def _render_todo_actions(self) -> None:
         sel = len(self._selected_todo)
@@ -357,9 +329,8 @@ class DebugTodosPane(Container):
             actions.append(("prune-todo", t("dt.btn_prune_todo", count=self._empty_todo), "#0178d4"))
         if len(self._orphaned_todo_names) > 0:
             actions.append(("trash-orphaned-todo", t("dt.btn_trash_orphaned_todo", count=len(self._orphaned_todo_names)), "#ba3c5b"))
-        markup, click_map = self._build_action_bar(actions)
-        self._todo_action_map = click_map
-        self.query_one("#todo-actions", Static).update(markup)
+        bar = self.query_one("#todo-actions", ActionBar)
+        bar.set_actions(actions, on_action=self._handle_action)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Show file content preview when a row is highlighted."""
@@ -382,7 +353,7 @@ class DebugTodosPane(Container):
                 content = f"Directory with {len(list(p.iterdir()))} items:\n\n"
                 for f in files:
                     size = f.stat().st_size if f.is_file() else 0
-                    content += f"  {f.name}  ({_format_bytes(size)})\n"
+                    content += f"  {f.name}  ({format_bytes(size)})\n"
             else:
                 content = "(not found)"
         except OSError as e:
@@ -406,27 +377,13 @@ class DebugTodosPane(Container):
             text.append(content)
         body.update(text)
 
-    def on_click(self, event) -> None:
-        """Handle action bar clicks."""
-        widget_id = getattr(event.widget, "id", "")
-        if widget_id == "debug-actions":
-            action_map = self._debug_action_map
-        elif widget_id == "todo-actions":
-            action_map = self._todo_action_map
-        else:
-            return
-        for start, end, action_id in action_map:
-            if start <= event.x < end:
-                self._handle_action(action_id)
-                break
-
     def _handle_action(self, action_id: str) -> None:
         if action_id == "trash-debug":
             # Multi-select mode
             if self._selected_debug:
                 names = list(self._selected_debug)
                 self.app.push_screen(
-                    ConfirmScreen(f"선택한 {len(names)}개 debug 파일을 삭제하시겠습니까?"),
+                    ConfirmScreen(t("confirm.bulk_delete", count=len(names), type="debug")),
                     callback=lambda ok, ns=names: self._do_trash_bulk("debug", ns) if ok else None,
                 )
                 return
@@ -439,7 +396,7 @@ class DebugTodosPane(Container):
                     items = self._debug_group_items.get(name, [])
                     if items:
                         self.app.push_screen(
-                            ConfirmScreen(f"이 그룹의 {len(items)}개 debug 파일을 삭제하시겠습니까?"),
+                            ConfirmScreen(t("confirm.group_delete", count=len(items), type="debug")),
                             callback=lambda ok, ns=items: self._do_trash_bulk("debug", ns) if ok else None,
                         )
                     return
@@ -452,7 +409,7 @@ class DebugTodosPane(Container):
             if self._selected_todo:
                 names = list(self._selected_todo)
                 self.app.push_screen(
-                    ConfirmScreen(f"선택한 {len(names)}개 todo 파일을 삭제하시겠습니까?"),
+                    ConfirmScreen(t("confirm.bulk_delete", count=len(names), type="todo")),
                     callback=lambda ok, ns=names: self._do_trash_bulk("todo", ns) if ok else None,
                 )
                 return
@@ -465,7 +422,7 @@ class DebugTodosPane(Container):
                     items = self._todo_group_items.get(name, [])
                     if items:
                         self.app.push_screen(
-                            ConfirmScreen(f"이 그룹의 {len(items)}개 todo 파일을 삭제하시겠습니까?"),
+                            ConfirmScreen(t("confirm.group_delete", count=len(items), type="todo")),
                             callback=lambda ok, ns=items: self._do_trash_bulk("todo", ns) if ok else None,
                         )
                     return
@@ -511,48 +468,62 @@ class DebugTodosPane(Container):
             )
 
     def _trash_debug(self, name: str) -> None:
-        if trash_debug_file(name):
-            self.app.notify(t("common.trashed", name=name))
-            self.refresh_data()
-        else:
-            self.app.notify(t("common.failed"), severity="error")
+        def _work():
+            if trash_debug_file(name):
+                self.app.call_from_thread(self.app.notify, t("common.trashed", name=name))
+            else:
+                self.app.call_from_thread(self.app.notify, t("common.failed"), severity="error")
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _trash_todo(self, name: str) -> None:
-        if trash_todo_file(name):
-            self.app.notify(t("common.trashed", name=name))
-            self.refresh_data()
-        else:
-            self.app.notify(t("common.failed"), severity="error")
+        def _work():
+            if trash_todo_file(name):
+                self.app.call_from_thread(self.app.notify, t("common.trashed", name=name))
+            else:
+                self.app.call_from_thread(self.app.notify, t("common.failed"), severity="error")
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_prune_debug(self) -> None:
-        ok, fail = prune_empty_debug_files()
-        self.app.notify(t("dt.prune_ok", ok=ok))
-        self.refresh_data()
+        def _work():
+            ok, fail = prune_empty_debug_files()
+            self.app.call_from_thread(self.app.notify, t("dt.prune_ok", ok=ok))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_prune_todo(self) -> None:
-        ok, fail = prune_empty_todo_files()
-        self.app.notify(t("dt.prune_ok", ok=ok))
-        self.refresh_data()
+        def _work():
+            ok, fail = prune_empty_todo_files()
+            self.app.call_from_thread(self.app.notify, t("dt.prune_ok", ok=ok))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_trash_bulk(self, kind: str, names: list[str]) -> None:
         """Bulk delete for multi-select and group delete."""
-        if kind == "debug":
-            ok, fail = trash_debug_files(names)
-            self._selected_debug.clear()
-        else:
-            ok, fail = trash_todo_files(names)
-            self._selected_todo.clear()
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            if kind == "debug":
+                ok, fail = trash_debug_files(names)
+                self._selected_debug.clear()
+            else:
+                ok, fail = trash_todo_files(names)
+                self._selected_todo.clear()
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_trash_orphaned_debug(self) -> None:
-        names = getattr(self, "_orphaned_debug_names", [])
-        ok, fail = trash_debug_files(names)
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            names = getattr(self, "_orphaned_debug_names", [])
+            ok, fail = trash_debug_files(names)
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_trash_orphaned_todo(self) -> None:
-        names = getattr(self, "_orphaned_todo_names", [])
-        ok, fail = trash_todo_files(names)
-        self.app.notify(t("common.trash_bulk_ok", ok=ok, fail=fail))
-        self.refresh_data()
+        def _work():
+            names = getattr(self, "_orphaned_todo_names", [])
+            ok, fail = trash_todo_files(names)
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)

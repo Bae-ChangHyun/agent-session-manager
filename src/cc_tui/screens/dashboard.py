@@ -8,14 +8,7 @@ from textual.widgets import DataTable, Static
 
 from cc_tui.i18n import t
 from cc_tui.services.claude_data import get_period_usage, get_stats, get_usage_data
-
-
-def _fmt(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from cc_tui.utils import format_bytes
 
 
 def _fmt_tokens(n: int) -> str:
@@ -186,8 +179,8 @@ class DashboardPane(Container):
             f"  {'Debug Files':20s} {stats.total_debug:>6d}    [dim](orphaned: {stats.orphaned_debug})[/]\n"
             f"  {'Todos':20s} {stats.total_todos:>6d}    [dim](orphaned: {stats.orphaned_todos})[/]\n"
             f"\n"
-            f"  {'Disk: .claude/':20s} {_fmt(stats.claude_dir_size):>10s}\n"
-            f"  {'Disk: projects/':20s} {_fmt(stats.projects_dir_size):>10s}"
+            f"  {'Disk: .claude/':20s} {format_bytes(stats.claude_dir_size):>10s}\n"
+            f"  {'Disk: projects/':20s} {format_bytes(stats.projects_dir_size):>10s}"
         )
         self.query_one("#dash-overview", Static).update(overview)
 
