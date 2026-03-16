@@ -73,25 +73,14 @@ The more you use Claude Code, the more files pile up in `~/.claude` — session 
 - Auto safety-backup before restore
 - Restore failure auto-rollback
 
-### 🔒 Safety
-- **Symlink rejection** — refuses to operate on symbolic links
-- **Path validation** — `is_relative_to` allowlist blocks outside `~/.claude`
-- **Thread-safe trash log** — `~/.cc-tui/trash-log.jsonl`
-- **Safe deletion** — everything via `send2trash`, no permanent deletes
-- **Atomic config writes** — tempfile + `os.replace`
-
 ---
 
 ## Install
 
 ```bash
+# pip
 pip install cc-session-utils
-```
 
-<details>
-<summary><strong>Other methods</strong></summary>
-
-```bash
 # uv
 uv tool install cc-session-utils
 
@@ -100,8 +89,6 @@ git clone https://github.com/Bae-ChangHyun/cc-session-utils.git
 cd cc-session-utils
 uv sync && uv run cc-tui
 ```
-
-</details>
 
 ---
 

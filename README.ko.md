@@ -73,35 +73,22 @@ Claude Code를 많이 사용할수록 `~/.claude` 디렉토리에 파일이 쌓�
 - 복원 전 자동 안전 백업
 - 복원 실패 시 자동 롤백
 
-### 🔒 안전성
-- **심볼릭 링크 차단** — symlink 우회 방지
-- **경로 검증** — `is_relative_to` allowlist로 `~/.claude` 외부 접근 차단
-- **스레드 안전 삭제 로그** — `~/.cc-tui/trash-log.jsonl`
-- **안전한 삭제** — `send2trash`로 OS 휴지통 이동, 영구 삭제 없음
-- **원자적 설정 저장** — tempfile + `os.replace`
-
 ---
 
 ## 설치
 
 ```bash
+# pip
 pip install cc-session-utils
-```
 
-<details>
-<summary><strong>다른 방법</strong></summary>
-
-```bash
 # uv
 uv tool install cc-session-utils
 
-# 소스에서
+# 소스에서 설치
 git clone https://github.com/Bae-ChangHyun/cc-session-utils.git
 cd cc-session-utils
 uv sync && uv run cc-tui
 ```
-
-</details>
 
 ---
 
