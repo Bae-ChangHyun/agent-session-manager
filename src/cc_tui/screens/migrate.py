@@ -13,6 +13,7 @@ from textual.widgets import DataTable, Static, Tree
 from cc_tui.models import PROJECTS_DIR
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.i18n import t
+from rich.markup import escape
 from cc_tui.services.claude_data import get_session_messages
 from cc_tui.services.migrate import get_available_projects, migrate_sessions
 from cc_tui.widgets.action_bar import ActionBar
@@ -98,7 +99,7 @@ class MigratePane(Container):
         self._target_hint: str | None = None
         self._target_encoded: str | None = None
         self._selected_sessions: set[str] = set()
-        self._session_rows: dict[str, str] = {}  # session_id -> row_key
+        self._session_rows: dict = {}  # session_id -> RowKey
         self._mode: str = "append"
 
     def compose(self) -> ComposeResult:
@@ -265,7 +266,7 @@ class MigratePane(Container):
             self._source_encoded = encoded
             self._selected_sessions.clear()
             self.query_one("#source-selected", Static).update(f"[bold cyan]{hint}[/]")
-            self.run_worker(lambda e=encoded, h=hint: self._load_sessions(e, h), thread=True)
+            self.run_worker(lambda e=encoded, h=hint: self._load_sessions(e, h), thread=True, group="session-load", exclusive=True)
         elif tree_id == "target-tree":
             self._target_hint = hint
             self._target_encoded = encoded
@@ -358,7 +359,7 @@ class MigratePane(Container):
         sid = event.row_key.value
         if sid not in self._session_rows:
             return
-        self.run_worker(lambda s=sid: self._load_session_preview(s), thread=True)
+        self.run_worker(lambda s=sid: self._load_session_preview(s), thread=True, group="session-preview", exclusive=True)
 
     def _load_session_preview(self, session_id: str) -> None:
         """Load messages for a session and show in preview."""
@@ -380,6 +381,7 @@ class MigratePane(Container):
             content = m.get("content", "")
             if len(content) > 120:
                 content = content[:120] + "..."
+            content = escape(content)
             if m.get("type") == "user":
                 lines.append(f"[bold cyan]User:[/] {content}")
             else:
