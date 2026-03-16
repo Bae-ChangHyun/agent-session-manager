@@ -54,7 +54,7 @@ def create_full_backup() -> str | None:
             shutil.copytree(
                 str(CLAUDE_DIR),
                 str(backup_dir / ".claude"),
-                symlinks=False,
+                symlinks=True,
                 ignore_dangling_symlinks=True,
             )
         if CLAUDE_JSON.exists():

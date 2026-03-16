@@ -8,6 +8,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from send2trash import send2trash
+
 from cc_tui.models import PROJECTS_DIR, encode_path
 
 
@@ -99,10 +101,10 @@ def migrate_sessions(
     # Overwrite mode: clear existing
     if mode == "overwrite":
         for f in target_dir.glob("*.jsonl"):
-            f.unlink()
+            send2trash(str(f))
         idx = target_dir / "sessions-index.json"
         if idx.exists():
-            idx.unlink()
+            send2trash(str(idx))
 
     # Copy sessions
     copied = 0

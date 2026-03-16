@@ -9,6 +9,8 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, Tree
 
+from rich.markup import escape
+
 from cc_tui.models import PROJECTS_DIR, ProjectInfo, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.backup import create_config_backup
@@ -367,7 +369,7 @@ class ProjectsPane(Container):
         for m in messages:
             content = m["content"]
             if m["type"] == "user":
-                lines.append(f"[bold green]User:[/]\n{content}\n")
+                lines.append(f"[bold green]User:[/]\n{escape(content)}\n")
             else:
                 if len(content) > 500:
                     content = content[:500] + "..."
