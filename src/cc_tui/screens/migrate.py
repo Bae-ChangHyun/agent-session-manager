@@ -330,7 +330,7 @@ class MigratePane(Container):
         )
 
         for sid, dt, prompt, size in sessions:
-            row_key = table.add_row("[bold green]x[/]", dt, prompt, size, key=sid)
+            row_key = table.add_row("[bold green]●[/]", dt, prompt, size, key=sid)
             self._session_rows[sid] = row_key
             self._selected_sessions.add(sid)
 
@@ -345,10 +345,10 @@ class MigratePane(Container):
 
         if sid in self._selected_sessions:
             self._selected_sessions.discard(sid)
-            table.update_cell(row_key, check_col, "[dim]-[/]")
+            table.update_cell(row_key, check_col, "[dim]○[/]")
         else:
             self._selected_sessions.add(sid)
-            table.update_cell(row_key, check_col, "[bold green]x[/]")
+            table.update_cell(row_key, check_col, "[bold green]●[/]")
 
         self._update_header_count()
 
