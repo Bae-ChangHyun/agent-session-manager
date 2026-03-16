@@ -80,12 +80,19 @@ class ConfirmScreen(ModalScreen[bool]):
         )
 
     def on_click(self, event) -> None:
-        if getattr(event.widget, "id", "") != "confirm-actions":
+        widget = event.widget
+        if getattr(widget, "id", "") != "confirm-actions":
             return
+        # content-align: center shifts rendered text; adjust x for centering offset
+        total_text_w = self._action_map[-1][1]  # end of last entry
+        widget_w = widget.size.width
+        offset = max(0, (widget_w - total_text_w) // 2)
+        x = event.x - offset
         for start, end, action in self._action_map:
-            if start <= event.x < end:
+            if start <= x < end:
                 self.dismiss(action == "yes")
-                break
+                return
+        # Click was on the actions bar but outside buttons — ignore (don't dismiss)
 
     def action_confirm(self) -> None:
         self.dismiss(True)

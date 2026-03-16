@@ -1,4 +1,4 @@
-"""Session migration screen - two-panel folder selection."""
+"""Session migration screen - two-panel folder selection with session picking."""
 
 from __future__ import annotations
 
@@ -7,17 +7,19 @@ from datetime import datetime
 from pathlib import PurePosixPath
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, RadioButton, RadioSet, Static, Tree
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.widgets import DataTable, Static, Tree
 
 from cc_tui.models import PROJECTS_DIR
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.i18n import t
+from cc_tui.services.claude_data import get_session_messages
 from cc_tui.services.migrate import get_available_projects, migrate_sessions
+from cc_tui.widgets.action_bar import ActionBar
 
 
 class MigratePane(Container):
-    """Session migration with two-panel project selection."""
+    """Session migration with two-panel project selection and session picking."""
 
     CSS = """
     MigratePane {
@@ -30,7 +32,8 @@ class MigratePane(Container):
         color: $text-muted;
     }
     #migrate-panels {
-        height: 1fr;
+        height: auto;
+        max-height: 40%;
     }
     .migrate-panel {
         width: 1fr;
@@ -51,20 +54,29 @@ class MigratePane(Container):
     .migrate-tree {
         height: 1fr;
     }
-    #migrate-preview {
-        height: auto;
-        max-height: 8;
+    #session-panel {
+        height: 1fr;
         border-top: tall $primary;
-        padding: 1;
+        padding: 0 1;
     }
-    #migrate-controls {
+    #session-header {
         height: auto;
+        margin: 1 0 0 0;
+    }
+    #session-table {
+        height: auto;
+        max-height: 9;
+    }
+    #session-preview {
+        height: 1fr;
+        min-height: 5;
+        border-top: dashed $accent;
+        padding: 0 1;
+        display: none;
+    }
+    #migrate-actions {
+        height: 1;
         margin-top: 1;
-        padding: 1;
-    }
-    #migrate-mode {
-        height: auto;
-        margin-bottom: 1;
     }
     #migrate-result {
         height: auto;
@@ -75,12 +87,19 @@ class MigratePane(Container):
     }
     """
 
+    BINDINGS = [
+        ("space", "toggle_session", "Toggle"),
+    ]
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._source_hint: str | None = None
         self._source_encoded: str | None = None
         self._target_hint: str | None = None
         self._target_encoded: str | None = None
+        self._selected_sessions: set[str] = set()
+        self._session_rows: dict[str, str] = {}  # session_id -> row_key
+        self._mode: str = "append"
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -96,19 +115,42 @@ class MigratePane(Container):
                 yield Static(t("mig.target_title"), classes="panel-title")
                 yield Static(t("mig.not_selected"), classes="panel-selected", id="target-selected")
                 yield Tree("Projects", id="target-tree", classes="migrate-tree")
-        yield Static("", id="migrate-preview")
-        with Horizontal(id="migrate-controls"):
-            with RadioSet(id="migrate-mode"):
-                yield RadioButton(t("mig.append"), value=True)
-                yield RadioButton(t("mig.overwrite"))
-            yield Button("Migrate", variant="primary", id="btn-migrate")
+        with Vertical(id="session-panel"):
+            yield Static("[dim]Select a source project to see sessions[/]", id="session-header")
+            yield DataTable(id="session-table")
+            with VerticalScroll(id="session-preview"):
+                yield Static("", id="session-preview-body")
+        yield ActionBar(id="migrate-actions")
         yield Static("", id="migrate-result")
 
     def on_mount(self) -> None:
         for tree_id in ("source-tree", "target-tree"):
             tree = self.query_one(f"#{tree_id}", Tree)
             tree.show_root = False
+        st = self.query_one("#session-table", DataTable)
+        st.cursor_type = "row"
+        st.zebra_stripes = True
+        st.add_columns("", "Date", "Session", "Size")
+        self._render_actions()
         self.run_worker(self._load_projects, thread=True)
+
+    def _render_actions(self) -> None:
+        bar = self.query_one("#migrate-actions", ActionBar)
+        mode_label = "Append" if self._mode == "append" else "Overwrite"
+        bar.set_actions(
+            [
+                ("toggle_mode", f"Mode: {mode_label}", "#555555"),
+                ("migrate", "Migrate", "#ba3c5b"),
+            ],
+            on_action=self._on_action,
+        )
+
+    def _on_action(self, action_id: str) -> None:
+        if action_id == "toggle_mode":
+            self._mode = "overwrite" if self._mode == "append" else "append"
+            self._render_actions()
+        elif action_id == "migrate":
+            self._start_migrate()
 
     def _load_projects(self) -> None:
         projects = get_available_projects()
@@ -221,23 +263,24 @@ class MigratePane(Container):
         if tree_id == "source-tree":
             self._source_hint = hint
             self._source_encoded = encoded
+            self._selected_sessions.clear()
             self.query_one("#source-selected", Static).update(f"[bold cyan]{hint}[/]")
-            self.run_worker(lambda: self._load_preview(encoded, hint), thread=True)
+            self.run_worker(lambda e=encoded, h=hint: self._load_sessions(e, h), thread=True)
         elif tree_id == "target-tree":
             self._target_hint = hint
             self._target_encoded = encoded
             self.query_one("#target-selected", Static).update(f"[bold green]{hint}[/]")
 
-    def _load_preview(self, encoded: str, hint: str) -> None:
+    def _load_sessions(self, encoded: str, hint: str) -> None:
+        """Load sessions for the selected source project."""
         session_dir = PROJECTS_DIR / encoded
         if not session_dir.exists():
-            self.app.call_from_thread(self._show_preview, hint, [], 0)
+            self.app.call_from_thread(self._populate_session_table, hint, [])
             return
 
         all_jsonl = list(session_dir.glob("*.jsonl"))
-        total = len(all_jsonl)
         sessions = []
-        for jsonl in sorted(all_jsonl, key=lambda f: f.stat().st_mtime, reverse=True)[:5]:
+        for jsonl in sorted(all_jsonl, key=lambda f: f.stat().st_mtime, reverse=True):
             try:
                 stat = jsonl.stat()
                 first_prompt = ""
@@ -246,16 +289,16 @@ class MigratePane(Container):
                         try:
                             msg = json.loads(line)
                             if msg.get("type") == "user" and not msg.get("isMeta"):
-                                content = msg.get("message", {}).get("content", "")
-                                if isinstance(content, str) and not content.startswith("<"):
-                                    first_prompt = content[:80]
+                                raw = msg.get("message", {}).get("content", "")
+                                if isinstance(raw, str) and not raw.startswith("<"):
+                                    first_prompt = raw[:50]
                                     break
-                                elif isinstance(content, list):
-                                    for block in content:
+                                elif isinstance(raw, list):
+                                    for block in raw:
                                         if isinstance(block, dict) and block.get("type") == "text":
                                             text = block.get("text", "")
                                             if not text.startswith("<"):
-                                                first_prompt = text[:80]
+                                                first_prompt = text[:50]
                                                 break
                                     if first_prompt:
                                         break
@@ -263,67 +306,157 @@ class MigratePane(Container):
                             continue
                 dt_str = datetime.fromtimestamp(stat.st_mtime).strftime("%m/%d %H:%M")
                 size_kb = stat.st_size / 1024
-                sessions.append(f"  {dt_str}  {first_prompt or jsonl.stem[:12]}  [dim]({size_kb:.0f}KB)[/]")
+                sessions.append((jsonl.stem, dt_str, first_prompt or jsonl.stem[:12], f"{size_kb:.0f}KB"))
             except OSError:
                 continue
-        self.app.call_from_thread(self._show_preview, hint, sessions, total)
+        self.app.call_from_thread(self._populate_session_table, hint, sessions)
 
-    def _show_preview(self, hint: str, sessions: list[str], total: int) -> None:
-        preview = self.query_one("#migrate-preview", Static)
-        if sessions:
-            header = f"[bold]Source Preview:[/] {hint}  [dim]({total} sessions, showing latest 5)[/]\n"
-            preview.update(header + "\n".join(sessions))
+    def _populate_session_table(self, hint: str, sessions: list[tuple[str, str, str, str]]) -> None:
+        """Fill the session DataTable with rows."""
+        table = self.query_one("#session-table", DataTable)
+        table.clear()
+        self._session_rows = {}
+        total = len(sessions)
+
+        header = self.query_one("#session-header", Static)
+        if total == 0:
+            header.update(f"[bold]Source:[/] {hint}  [dim](no sessions)[/]")
+            return
+
+        header.update(
+            f"[bold]Source:[/] {hint}  ({total} sessions)  "
+            f"[dim]Space: toggle, Enter/DblClick: preview[/]"
+        )
+
+        for sid, dt, prompt, size in sessions:
+            row_key = table.add_row("[bold green]x[/]", dt, prompt, size, key=sid)
+            self._session_rows[sid] = row_key
+            self._selected_sessions.add(sid)
+
+    def action_toggle_session(self) -> None:
+        """Toggle selection of the focused session row."""
+        table = self.query_one("#session-table", DataTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        row_key = list(table.rows.keys())[table.cursor_row]
+        sid = row_key.value
+        check_col = list(table.columns.keys())[0]
+
+        if sid in self._selected_sessions:
+            self._selected_sessions.discard(sid)
+            table.update_cell(row_key, check_col, "[dim]-[/]")
         else:
-            preview.update(f"[bold]Source Preview:[/] {hint}  [dim](no sessions)[/]")
+            self._selected_sessions.add(sid)
+            table.update_cell(row_key, check_col, "[bold green]x[/]")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-migrate":
-            if not self._source_encoded:
-                self.app.notify(t("mig.select_source"), severity="error")
-                return
-            if not self._target_encoded:
-                self.app.notify(t("mig.select_target"), severity="error")
-                return
-            if self._source_encoded == self._target_encoded:
-                self.app.notify(t("mig.same_error"), severity="error")
-                return
+        self._update_header_count()
 
-            radio_set = self.query_one("#migrate-mode", RadioSet)
-            mode = "append" if radio_set.pressed_index == 0 else "overwrite"
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter or double-click on a session row → show conversation preview."""
+        if event.control.id != "session-table":
+            return
+        sid = event.row_key.value
+        if sid not in self._session_rows:
+            return
+        self.run_worker(lambda s=sid: self._load_session_preview(s), thread=True)
 
-            self.app.push_screen(
-                ConfirmScreen(
-                    t("mig.confirm", src=self._source_hint, tgt=self._target_hint, mode=mode)
-                ),
-                callback=lambda ok: self._do_migrate() if ok else None,
-            )
+    def _load_session_preview(self, session_id: str) -> None:
+        """Load messages for a session and show in preview."""
+        messages = get_session_messages(session_id, limit=20)
+        self.app.call_from_thread(self._show_session_preview, session_id, messages)
+
+    def _show_session_preview(self, session_id: str, messages: list[dict]) -> None:
+        """Render session messages in the preview panel."""
+        panel = self.query_one("#session-preview")
+        body = self.query_one("#session-preview-body", Static)
+        panel.display = True
+
+        if not messages:
+            body.update(f"[dim]Session {session_id[:12]}... - no messages[/]")
+            return
+
+        lines = [f"[bold]Session:[/] {session_id[:16]}...\n"]
+        for m in messages[:15]:
+            content = m.get("content", "")
+            if len(content) > 120:
+                content = content[:120] + "..."
+            if m.get("type") == "user":
+                lines.append(f"[bold cyan]User:[/] {content}")
+            else:
+                lines.append(f"[bold green]Assistant:[/] {content}")
+        body.update("\n".join(lines))
+
+    def _update_header_count(self) -> None:
+        """Update header to show selection count."""
+        header = self.query_one("#session-header", Static)
+        sel = len(self._selected_sessions)
+        total = len(self._session_rows)
+        if sel == total:
+            note = f"[dim]all {total} selected[/]"
+        elif sel == 0:
+            note = "[bold red]none selected[/]"
+        else:
+            note = f"[bold cyan]{sel}[/] of {total} selected"
+        header.update(f"[bold]Source:[/] {self._source_hint}  ({total} sessions)  {note}")
+
+    def _start_migrate(self) -> None:
+        if not self._source_encoded:
+            self.app.notify(t("mig.select_source"), severity="error")
+            return
+        if not self._target_encoded:
+            self.app.notify(t("mig.select_target"), severity="error")
+            return
+        if self._source_encoded == self._target_encoded:
+            self.app.notify(t("mig.same_error"), severity="error")
+            return
+        if self._session_rows and not self._selected_sessions:
+            self.app.notify("No sessions selected", severity="error")
+            return
+
+        sel = len(self._selected_sessions)
+        total = len(self._session_rows)
+        count_info = f"{sel} of {total}" if sel > 0 else f"all {total}"
+        self.app.push_screen(
+            ConfirmScreen(
+                t("mig.confirm", src=self._source_hint, tgt=self._target_hint, mode=self._mode)
+                + f"\n({count_info} sessions)"
+            ),
+            callback=lambda ok: self._do_migrate() if ok else None,
+        )
 
     def _do_migrate(self) -> None:
         src_hint = self._source_hint
         tgt_hint = self._target_hint
         src_enc = self._source_encoded
         tgt_enc = self._target_encoded
-        mode = "append"
-        radio_set = self.query_one("#migrate-mode", RadioSet)
-        if radio_set.pressed_index == 1:
-            mode = "overwrite"
+        # If all sessions selected, pass None (no filter = migrate all)
+        if len(self._selected_sessions) == len(self._session_rows):
+            selected = None
+        elif self._selected_sessions:
+            selected = list(self._selected_sessions)
+        else:
+            selected = []  # empty list = migrate nothing
+        mode = self._mode
         self.run_worker(
-            lambda: self._execute_migrate(src_hint, tgt_hint, src_enc, tgt_enc, mode),
+            lambda: self._execute_migrate(src_hint, tgt_hint, src_enc, tgt_enc, mode, selected),
             thread=True,
         )
 
-    def _execute_migrate(self, src_hint, tgt_hint, src_enc, tgt_enc, mode) -> None:
+    def _execute_migrate(self, src_hint, tgt_hint, src_enc, tgt_enc, mode, session_ids) -> None:
         result = migrate_sessions(
             source_path=src_hint,
             target_path=tgt_hint,
             mode=mode,
             source_encoded=src_enc,
             target_encoded=tgt_enc,
+            session_ids=session_ids,
         )
         self.app.call_from_thread(self._show_result, result)
 
     def refresh_data(self) -> None:
         """Reload project trees."""
+        self._selected_sessions.clear()
+        self._session_rows = {}
         self.run_worker(self._load_projects, thread=True)
 
     def _show_result(self, result) -> None:
@@ -336,7 +469,6 @@ class MigratePane(Container):
                 f"{result.message}"
             )
             self.app.notify(t("mig.complete"))
-            # Refresh trees to show updated session counts
             self.refresh_data()
         else:
             result_widget.update(f"[red]{t('mig.failed')}:[/] {result.message}")

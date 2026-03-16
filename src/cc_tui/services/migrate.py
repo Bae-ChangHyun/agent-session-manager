@@ -57,6 +57,7 @@ def migrate_sessions(
     mode: str = "append",
     source_encoded: str | None = None,
     target_encoded: str | None = None,
+    session_ids: list[str] | None = None,
 ) -> MigrateResult:
     """Migrate sessions from source project to target project.
 
@@ -66,6 +67,8 @@ def migrate_sessions(
         mode: "append" (keep existing, skip duplicates) or "overwrite"
         source_encoded: Pre-encoded source dir name (avoids lossy re-encoding)
         target_encoded: Pre-encoded target dir name (avoids lossy re-encoding)
+        session_ids: If provided, only migrate these specific session IDs.
+                     If None, migrate all sessions.
     """
     source_encoded = source_encoded or encode_path(source_path)
     target_encoded = target_encoded or encode_path(target_path)
@@ -80,10 +83,15 @@ def migrate_sessions(
             msg += f"\nSimilar: {', '.join(similar)}"
         return MigrateResult(success=False, message=msg)
 
-    # Check for session files
-    source_sessions = list(source_dir.glob("*.jsonl"))
+    # Check for session files (filter by session_ids if provided)
+    all_sessions = list(source_dir.glob("*.jsonl"))
+    if session_ids is not None:
+        id_set = set(session_ids)
+        source_sessions = [f for f in all_sessions if f.stem in id_set]
+    else:
+        source_sessions = all_sessions
     if not source_sessions:
-        return MigrateResult(success=False, message="No session files in source")
+        return MigrateResult(success=False, message="No session files to migrate")
 
     # Prepare target
     target_dir.mkdir(parents=True, exist_ok=True)
