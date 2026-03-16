@@ -59,23 +59,28 @@
 ### 세션 마이그레이션
 
 - 프로젝트 A의 세션을 프로젝트 B로 복사 (원본 유지)
+- **개별 세션 선택:** DataTable에서 `Space`로 세션을 체크/해제, `Enter`로 대화 내용 미리보기
+- 전체 선택, 일부 선택 모두 지원
 - Append 모드: 기존 세션 유지, 중복 건너뜀
 - Overwrite 모드: 기존 세션 삭제 후 덮어쓰기
 - 메모리 파일 및 세션 인덱스 함께 마이그레이션
+- 마이그레이션 후 경로 참조(`cwd`, `projectPath` 등) 자동 업데이트
 
 ### 백업 / 복원
 
 - 설정 백업: `.claude.json` 파일만 빠르게 백업
 - 전체 백업: `~/.claude` 디렉토리 전체 복사
 - 백업 목록 조회, 복원(복원 전 현재 설정 자동 백업), 삭제
-- 복원 실패 시 자동 롤백으로 데이터 손실 방지
+- 백업 삭제 시 OS 휴지통으로 이동 (`send2trash`)
+- 복원 실패 시 자동 롤백(rename+rollback 패턴)으로 데이터 손실 방지
 
 ### 안전성
 
-- 모든 삭제 작업은 OS 휴지통으로 이동 (`send2trash`)
-- 삭제 이력을 `~/.cc-tui/trash-log.jsonl`에 기록하여 추적 가능
-- 경로 검증(allowlist 기반)으로 의도하지 않은 파일 삭제 방지
-- 복원 시 rename+rollback 패턴으로 실패 시 원본 보존
+- **심볼릭 링크 차단:** 삭제 전 symlink 여부를 확인하여 우회 방지
+- **경로 검증:** `is_relative_to` 기반 allowlist로 `~/.claude` 외부 경로 접근 차단
+- **스레드 안전 삭제 로그:** `threading.Lock`으로 보호되는 `~/.cc-tui/trash-log.jsonl`에 모든 삭제 이력 기록
+- **안전한 삭제:** 모든 삭제 작업은 `send2trash`로 OS 휴지통에 이동 (영구 삭제 없음)
+- **원자적 설정 저장:** `.claude.json` 교체 시 임시 파일 + `os.replace` 방식으로 중간 실패 방지
 
 ### 기타
 
@@ -86,27 +91,29 @@
 
 ## 설치
 
-### 사전 요구사항
-
-- Python 3.11 이상
-- [uv](https://github.com/astral-sh/uv) (권장) 또는 pip
-
-### PyPI에서 설치
+### PyPI에서 설치 (권장)
 
 ```bash
 pip install cc-tui
 ```
 
-### 소스에서 설치 (개발용)
+### uv로 설치
+
+```bash
+uv tool install cc-tui
+```
+
+<details>
+<summary><strong>소스에서 설치 (개발용)</strong></summary>
 
 ```bash
 git clone https://github.com/bch/cc-tui.git
 cd cc-tui
 uv sync
+uv run cc-tui
 ```
 
-<details>
-<summary><strong>pip으로 설치</strong></summary>
+pip을 사용하는 경우:
 
 ```bash
 git clone https://github.com/bch/cc-tui.git
@@ -125,11 +132,7 @@ pip install -e .
 ### 기본 실행
 
 ```bash
-# PyPI 설치 시
 cc-tui
-
-# 소스에서 실행 시
-uv run cc-tui
 ```
 
 ### 옵션
@@ -155,7 +158,8 @@ CC_TUI_LANG=ko cc-tui
 | `↑`/`↓` | 목록 탐색 |
 | `d` | 선택 항목 삭제 |
 | `D` | Orphaned 전체 삭제 |
-| `Space` | 다중 선택 토글 |
+| `Space` | 다중 선택 토글 / 마이그레이션 세션 선택 |
+| `Enter` | 마이그레이션 세션 대화 미리보기 |
 
 ---
 
@@ -175,13 +179,13 @@ cc-tui/
 │       │   ├── projects.py      # 프로젝트/세션 관리 트리
 │       │   ├── file_history.py  # 파일 히스토리 관리
 │       │   ├── debug_todos.py   # Debug/Todos 파일 관리
-│       │   ├── migrate.py       # 세션 마이그레이션
+│       │   ├── migrate.py       # 세션 마이그레이션 (개별 선택 + 미리보기)
 │       │   ├── backups.py       # 백업/복원
 │       │   └── confirm.py       # 확인 다이얼로그
 │       ├── services/
 │       │   ├── claude_data.py   # Claude 데이터 파싱/조회
-│       │   ├── backup.py        # 백업/복원 로직
-│       │   ├── cleaner.py       # 파일 삭제(휴지통 이동)
+│       │   ├── backup.py        # 백업/복원 로직 (rename+rollback)
+│       │   ├── cleaner.py       # 파일 삭제 (send2trash + 경로 검증)
 │       │   └── migrate.py       # 세션 마이그레이션 로직
 │       └── widgets/
 │           └── action_bar.py    # 재사용 액션 바 위젯
