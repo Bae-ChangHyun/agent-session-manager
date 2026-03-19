@@ -487,15 +487,19 @@ def get_period_usage(period: str = "daily") -> list[dict]:
     from collections import defaultdict
     from datetime import datetime, timedelta
 
+    # Per-1M-token rates (USD).  Opus 4.5/4.6 is 3x cheaper than 4.0/4.1.
     model_cost_rates = {
-        "input": {"opus": 15, "sonnet": 3, "haiku": 0.80},
-        "output": {"opus": 75, "sonnet": 15, "haiku": 4},
-        "cache_read": {"opus": 1.5, "sonnet": 0.30, "haiku": 0.08},
-        "cache_create": {"opus": 18.75, "sonnet": 3.75, "haiku": 1},
+        "input":        {"opus": 15, "opus45": 5,  "sonnet": 3,  "haiku": 1},
+        "output":       {"opus": 75, "opus45": 25, "sonnet": 15, "haiku": 5},
+        "cache_read":   {"opus": 1.5, "opus45": 0.50, "sonnet": 0.30, "haiku": 0.10},
+        "cache_create": {"opus": 18.75, "opus45": 6.25, "sonnet": 3.75, "haiku": 1.25},
     }
 
     def _model_tier(model_name: str) -> str:
         if "opus" in model_name:
+            # opus-4-5, opus-4-6 → new pricing; opus-4-0, opus-4-1 → old pricing
+            if "opus-4-5" in model_name or "opus-4-6" in model_name:
+                return "opus45"
             return "opus"
         if "haiku" in model_name:
             return "haiku"
@@ -533,10 +537,14 @@ def get_period_usage(period: str = "daily") -> list[dict]:
     if not PROJECTS_DIR.exists():
         return []
 
+    # First pass: collect last usage per message id (streaming writes
+    # multiple JSONL lines per API call with the same usage; only the
+    # last line carries the final output_tokens count).
+    msg_last: dict[str, dict] = {}  # message_id -> {usage, model, ts_str}
     for d in PROJECTS_DIR.iterdir():
         if not d.is_dir():
             continue
-        for jsonl in d.glob("*.jsonl"):
+        for jsonl in d.rglob("*.jsonl"):
             try:
                 with open(jsonl) as f:
                     for line in f:
@@ -548,26 +556,39 @@ def get_period_usage(period: str = "daily") -> list[dict]:
                             usage = m.get("usage")
                             model = m.get("model", "")
                             ts_str = msg.get("timestamp", "")
-                            if not usage or not ts_str:
+                            msg_id = m.get("id", "")
+                            if not usage or not ts_str or not msg_id:
                                 continue
-                            try:
-                                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                            except ValueError:
-                                continue
-                            pk = _period_key(dt)
-                            tier = _model_tier(model)
-                            short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
-                            entry = agg[pk][short_model]
-                            entry["input_tokens"] += usage.get("input_tokens", 0)
-                            entry["output_tokens"] += usage.get("output_tokens", 0)
-                            entry["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0)
-                            entry["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0)
-                            entry["cost"] += _calc_cost(usage, tier)
-                            entry["messages"] += 1
+                            # Keep last entry per message id (final streaming event)
+                            msg_last[msg_id] = {
+                                "usage": usage,
+                                "model": model,
+                                "ts_str": ts_str,
+                            }
                         except (json.JSONDecodeError, KeyError):
                             continue
             except OSError:
                 continue
+
+    # Second pass: aggregate deduplicated entries
+    for info in msg_last.values():
+        usage = info["usage"]
+        model = info["model"]
+        ts_str = info["ts_str"]
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        pk = _period_key(dt)
+        tier = _model_tier(model)
+        short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
+        entry = agg[pk][short_model]
+        entry["input_tokens"] += usage.get("input_tokens", 0)
+        entry["output_tokens"] += usage.get("output_tokens", 0)
+        entry["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0)
+        entry["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0)
+        entry["cost"] += _calc_cost(usage, tier)
+        entry["messages"] += 1
 
     # Convert to sorted list
     result = []

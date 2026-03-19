@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import DataTable, Static, Tree
+from textual.widgets import DataTable, DirectoryTree, Static, Tree
 
-from cc_tui.models import PROJECTS_DIR
+from cc_tui.models import PROJECTS_DIR, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.i18n import t
 from rich.markup import escape
@@ -115,7 +115,7 @@ class MigratePane(Container):
             with Vertical(classes="migrate-panel"):
                 yield Static(t("mig.target_title"), classes="panel-title")
                 yield Static(t("mig.not_selected"), classes="panel-selected", id="target-selected")
-                yield Tree("Projects", id="target-tree", classes="migrate-tree")
+                yield DirectoryTree(str(Path.home()), id="target-tree", classes="migrate-tree")
         with Vertical(id="session-panel"):
             yield Static("[dim]Select a source project to see sessions[/]", id="session-header")
             yield DataTable(id="session-table")
@@ -125,9 +125,7 @@ class MigratePane(Container):
         yield Static("", id="migrate-result")
 
     def on_mount(self) -> None:
-        for tree_id in ("source-tree", "target-tree"):
-            tree = self.query_one(f"#{tree_id}", Tree)
-            tree.show_root = False
+        self.query_one("#source-tree", Tree).show_root = False
         st = self.query_one("#session-table", DataTable)
         st.cursor_type = "row"
         st.zebra_stripes = True
@@ -168,10 +166,6 @@ class MigratePane(Container):
         source_projects = [(e, h) for e, h in projects if project_sessions.get(e, 0) > 0]
         self._populate_tree(source_tree, source_projects, project_sessions)
 
-        target_tree = self.query_one("#target-tree", Tree)
-        target_tree.clear()
-        self._populate_tree(target_tree, projects, project_sessions)
-
     def _populate_tree(self, tree: Tree, projects: list[tuple[str, str]], session_counts: dict[str, int]) -> None:
         root_nodes: dict = {}
         for encoded, hint in projects:
@@ -198,7 +192,7 @@ class MigratePane(Container):
                 encoded, hint, sessions = children["__leaf__"]
                 name = PurePosixPath(hint).name or hint
                 session_str = f"  [dim]{sessions} sessions[/]" if sessions > 0 else "  [dim]empty[/]"
-                label = f"{name}{session_str}"
+                label = f"\U0001f4c2 {name}{session_str}"
                 if child_dirs:
                     node = parent.add(label, data=("project", hint, encoded), expand=False)
                     self._render_nodes(node, child_dirs, new_path)
@@ -223,7 +217,7 @@ class MigratePane(Container):
                 if is_collapsed_leaf:
                     encoded, hint, sessions = collapsed_children["__leaf__"]
                     session_str = f"  [dim]{sessions} sessions[/]" if sessions > 0 else "  [dim]empty[/]"
-                    label = f"{collapsed}{session_str}"
+                    label = f"\U0001f4c2 {collapsed}{session_str}"
                     if collapsed_child_dirs:
                         node = parent.add(label, data=("project", hint, encoded), expand=False)
                         self._render_nodes(node, collapsed_child_dirs, f"{current_path}/{collapsed}")
@@ -232,7 +226,7 @@ class MigratePane(Container):
                 elif collapsed_child_dirs:
                     count = self._count_leaves(collapsed_children)
                     group = parent.add(
-                        f"[bold]{collapsed}/[/]  ({count})",
+                        f"\U0001f4c1 [bold]{collapsed}/[/]  ({count})",
                         data=("group", None, None),
                         expand=False,
                     )
@@ -240,7 +234,7 @@ class MigratePane(Container):
             else:
                 count = self._count_leaves(children)
                 group = parent.add(
-                    f"[bold]{key}/[/]  ({count})",
+                    f"\U0001f4c1 [bold]{key}/[/]  ({count})",
                     data=("group", None, None),
                     expand=False,
                 )
@@ -267,10 +261,12 @@ class MigratePane(Container):
             self._selected_sessions.clear()
             self.query_one("#source-selected", Static).update(f"[bold cyan]{hint}[/]")
             self.run_worker(lambda e=encoded, h=hint: self._load_sessions(e, h), thread=True, group="session-load", exclusive=True)
-        elif tree_id == "target-tree":
-            self._target_hint = hint
-            self._target_encoded = encoded
-            self.query_one("#target-selected", Static).update(f"[bold green]{hint}[/]")
+
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        target_path = str(event.path)
+        self._target_hint = target_path
+        self._target_encoded = encode_path(target_path)
+        self.query_one("#target-selected", Static).update(f"[bold green]{target_path}[/]")
 
     def _load_sessions(self, encoded: str, hint: str) -> None:
         """Load sessions for the selected source project."""
