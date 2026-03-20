@@ -10,7 +10,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import PROJECTS_DIR, encode_path
+from cc_tui.models import PROJECTS_DIR, decode_path_hint, encode_path
 
 
 @dataclass
@@ -30,9 +30,7 @@ def get_available_projects() -> list[tuple[str, str]]:
     result = []
     for d in sorted(PROJECTS_DIR.iterdir()):
         if d.is_dir():
-            # Try to decode the path hint
-            parts = d.name.strip("-").split("-")
-            hint = "/" + "/".join(p for p in parts if p)
+            hint = decode_path_hint(d.name)
             result.append((d.name, hint))
     return result
 
