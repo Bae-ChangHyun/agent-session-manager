@@ -1,6 +1,6 @@
 [project]
 name = "cc-session-utils"
-version = "0.2.0"
+version = "0.3.0"
 description = "Terminal UI for managing Claude Code sessions, projects, and data"
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,6 +16,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -48,3 +49,8 @@ packages = ["src/cc_tui"]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["docs/", "*.cast", "fonts/"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

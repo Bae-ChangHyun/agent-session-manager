@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -31,18 +32,23 @@ from cc_tui.models import (
 
 
 def _dir_size(path: Path) -> int:
-    """Calculate total size of a directory using du for speed."""
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["du", "-sb", str(path)],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            return int(result.stdout.split()[0])
-    except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
-        pass
-    # Fallback to Python
+    """Calculate total size of a directory.
+
+    Uses ``du -sb`` on Linux for speed, falls back to pure-Python walk
+    on Windows / macOS / when the command fails.
+    """
+    if sys.platform != "win32":
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["du", "-sb", str(path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                return int(result.stdout.split()[0])
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+            pass
+    # Pure-Python fallback (Windows, macOS, or du failure)
     total = 0
     try:
         for entry in path.rglob("*"):
@@ -630,7 +636,7 @@ def get_usage_data() -> dict:
         if cost > 0:
             project_costs.append({
                 "path": path_str,
-                "name": path_str.rstrip("/").split("/")[-1],
+                "name": Path(path_str).name or path_str,
                 "cost": cost,
                 "duration": config.get("lastDuration") or 0,
             })

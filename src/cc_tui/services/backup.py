@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def create_full_backup() -> str | None:
             shutil.copytree(
                 str(CLAUDE_DIR),
                 str(backup_dir / ".claude"),
-                symlinks=True,
+                symlinks=(sys.platform != "win32"),
                 ignore_dangling_symlinks=True,
             )
         if CLAUDE_JSON.exists():

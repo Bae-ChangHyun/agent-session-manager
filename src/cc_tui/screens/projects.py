@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import PurePosixPath
+from pathlib import PurePath
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -133,7 +133,7 @@ class ProjectsPane(Container):
         root_nodes: dict = {}  # nested dict structure
 
         for p in sorted(projects, key=lambda x: x.path):
-            parts = PurePosixPath(p.path).parts  # ('/', 'home', 'bch', 'Project', ...)
+            parts = PurePath(p.path).parts  # ('/', 'home', 'bch', 'Project', ...)
             current = root_nodes
             for part in parts:
                 if part not in current:
@@ -313,7 +313,7 @@ class ProjectsPane(Container):
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
         status = t("proj.status_found") if p.exists else t("proj.status_missing")
-        header.update(f"[bold]{PurePosixPath(p.path).name}[/]")
+        header.update(f"[bold]{PurePath(p.path).name}[/]")
 
         detail = (
             f"[bold]Path:[/] {p.path}\n"
@@ -446,7 +446,7 @@ class ProjectsPane(Container):
                     p = self._project_map.get(p_path)
                     if p:
                         status = "[green]O[/]" if p.exists else "[red]X[/]"
-                        name = PurePosixPath(p_path).name
+                        name = PurePath(p_path).name
                         count_str = f"  [dim]{new_count} sessions[/]" if new_count > 0 else ""
                         parent.set_label(f"{status} {name}{count_str}")
             self._render_detail_actions(show_trash_session=False, show_remove_config=False)

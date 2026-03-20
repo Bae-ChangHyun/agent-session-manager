@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+IS_WINDOWS = sys.platform == "win32"
 
 
 def encode_path(path: str) -> str:
@@ -18,9 +21,20 @@ def encode_path(path: str) -> str:
 
 
 def decode_path_hint(encoded: str) -> str:
-    """Best-effort decode of an encoded path (lossy, for display only)."""
-    parts = encoded.strip("-").split("-")
-    return "/" + "/".join(p for p in parts if p)
+    """Best-effort decode of an encoded path (lossy, for display only).
+
+    On Windows, detects drive-letter prefixes (e.g. ``C-Users-...`` → ``C:/Users/...``).
+    On Unix, always prefixes with ``/``.
+    """
+    parts = [p for p in encoded.strip("-").split("-") if p]
+    if not parts:
+        return "/"
+    # Windows: first part is a single letter → treat as drive letter
+    if IS_WINDOWS and len(parts[0]) == 1 and parts[0].isalpha():
+        drive = parts[0].upper()
+        rest = "/".join(parts[1:])
+        return f"{drive}:/{rest}" if rest else f"{drive}:/"
+    return "/" + "/".join(parts)
 
 
 CLAUDE_DIR = Path.home() / ".claude"
