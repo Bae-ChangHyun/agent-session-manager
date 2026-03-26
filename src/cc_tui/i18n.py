@@ -273,27 +273,52 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # ── Backups ──
     "bak.info": {
         "en": (
-            "[bold]Backups[/] - Create and restore config/full backups\n"
-            "[dim]Stored in ~/.cc-tui/backups/. Create backups before risky operations.[/]"
+            "[bold]Backups[/] - Create, restore, and export/import backups\n"
+            "[dim]Stored in ~/.cc-tui/backups/. SPACE=multi-select, Export as .tar.gz for server migration.[/]"
         ),
         "ko": (
-            "[bold]Backups[/] - 설정/전체 백업 생성 및 복원\n"
-            "[dim]~/.cc-tui/backups/ 에 저장됩니다. 작업 전 백업을 만들어두면 실수해도 복구할 수 있습니다.[/]"
+            "[bold]Backups[/] - 백업 생성, 복원, 내보내기/가져오기\n"
+            "[dim]~/.cc-tui/backups/ 에 저장됩니다. SPACE=다중 선택, 서버 이동 시 .tar.gz로 내보내기/가져오기 가능.[/]"
         ),
     },
-    "bak.btn_config": {"en": "Create Config Backup", "ko": "설정 백업 생성"},
-    "bak.btn_full": {"en": "Create Full Backup", "ko": "전체 백업 생성"},
-    "bak.btn_restore": {"en": "Restore Selected", "ko": "선택 항목 복원"},
-    "bak.btn_delete": {"en": "Delete Selected", "ko": "선택 항목 삭제"},
+    "bak.btn_config": {"en": "Config", "ko": "Config"},
+    "bak.btn_full": {"en": "Full", "ko": "Full"},
+    "bak.btn_settings": {"en": "Settings", "ko": "Settings"},
+    "bak.btn_plugins": {"en": "Plugins", "ko": "Plugins"},
+    "bak.btn_sessions": {"en": "Sessions", "ko": "Sessions"},
+    "bak.btn_restore": {"en": "Restore", "ko": "복원"},
+    "bak.btn_delete": {"en": "Delete", "ko": "삭제"},
+    "bak.btn_export": {"en": "Export .tar.gz", "ko": "내보내기 .tar.gz"},
+    "bak.btn_import": {"en": "Import .tar.gz", "ko": "가져오기 .tar.gz"},
     "bak.confirm_full": {
         "en": "Create a full backup of .claude directory?\nThis may take a moment.",
         "ko": ".claude 디렉토리 전체 백업을 생성하시겠습니까?\n시간이 다소 걸릴 수 있습니다.",
     },
+    "bak.confirm_settings": {
+        "en": "Create settings backup?\n(settings.json, settings.local.json, keybindings.json)",
+        "ko": "설정 백업을 생성하시겠습니까?\n(settings.json, settings.local.json, keybindings.json)",
+    },
+    "bak.confirm_plugins": {
+        "en": "Create plugins backup?\n(plugins/ and skills/ directories)\nThis may take a moment.",
+        "ko": "플러그인 백업을 생성하시겠습니까?\n(plugins/, skills/ 디렉토리)\n시간이 다소 걸릴 수 있습니다.",
+    },
+    "bak.confirm_sessions": {
+        "en": "Create sessions backup?\n(projects/ directory - all session data)\nThis may take a moment.",
+        "ko": "세션 백업을 생성하시겠습니까?\n(projects/ 디렉토리 - 전체 세션 데이터)\n시간이 다소 걸릴 수 있습니다.",
+    },
     "bak.confirm_restore": {
-        "en": "Restore backup '{name}'?\nCurrent config will be backed up first.",
-        "ko": "백업 '{name}'을(를) 복원하시겠습니까?\n현재 설정이 먼저 백업됩니다.",
+        "en": "Restore backup '{name}'?\nCurrent data will be backed up first.",
+        "ko": "백업 '{name}'을(를) 복원하시겠습니까?\n현재 데이터가 먼저 백업됩니다.",
     },
     "bak.confirm_delete": {"en": "Delete backup '{name}'?", "ko": "백업 '{name}'을(를) 삭제하시겠습니까?"},
+    "bak.confirm_bulk_delete": {
+        "en": "Delete {count} selected backups?",
+        "ko": "선택한 {count}개 백업을 삭제하시겠습니까?",
+    },
+    "bak.symlink_warning": {
+        "en": "Restored with warnings:\n{count} symlink(s) have broken targets.\nThese plugins/skills may not work:\n{items}",
+        "ko": "복원 완료 (경고):\n{count}개 symlink의 대상이 존재하지 않습니다.\n해당 플러그인/스킬이 동작하지 않을 수 있습니다:\n{items}",
+    },
     # Common
     "common.trashed": {"en": "Trashed: {name}", "ko": "삭제됨: {name}"},
     "common.failed": {"en": "Failed", "ko": "실패"},
@@ -301,14 +326,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "common.orphaned": {"en": "[yellow]Orphaned[/]", "ko": "[yellow]Orphaned[/]"},
     "common.trash_bulk_ok": {"en": "Deleted {ok} items ({fail} failed)", "ko": "{ok}개 삭제 완료 ({fail}개 실패)"},
     "common.no_items": {"en": "No items to delete", "ko": "삭제할 항목 없음"},
-    "bak.config_created": {"en": "Config backup created: {path}", "ko": "설정 백업 생성: {path}"},
+    "bak.config_created": {"en": "Config backup created: {path}", "ko": "Config 백업 생성: {path}"},
+    "bak.settings_created": {"en": "Settings backup created: {path}", "ko": "Settings 백업 생성: {path}"},
+    "bak.plugins_creating": {"en": "Creating plugins backup...", "ko": "Plugins 백업 생성 중..."},
+    "bak.plugins_created": {"en": "Plugins backup created: {path}", "ko": "Plugins 백업 생성: {path}"},
+    "bak.sessions_creating": {"en": "Creating sessions backup...", "ko": "Sessions 백업 생성 중..."},
+    "bak.sessions_created": {"en": "Sessions backup created: {path}", "ko": "Sessions 백업 생성: {path}"},
     "bak.backup_failed": {"en": "Failed to create backup", "ko": "백업 생성 실패"},
     "bak.full_creating": {"en": "Creating full backup...", "ko": "전체 백업 생성 중..."},
-    "bak.full_created": {"en": "Full backup created: {path}", "ko": "전체 백업 생성: {path}"},
+    "bak.full_created": {"en": "Full backup created: {path}", "ko": "Full 백업 생성: {path}"},
     "bak.restored": {"en": "Restored: {name}", "ko": "복원 완료: {name}"},
     "bak.restore_failed": {"en": "Restore failed", "ko": "복원 실패"},
     "bak.deleted": {"en": "Deleted: {name}", "ko": "삭제 완료: {name}"},
     "bak.delete_failed": {"en": "Delete failed", "ko": "삭제 실패"},
+    "bak.bulk_deleted": {"en": "Deleted {ok} backups ({fail} failed)", "ko": "{ok}개 백업 삭제 ({fail}개 실패)"},
+    "bak.exported": {"en": "Exported: {path}", "ko": "내보내기 완료: {path}"},
+    "bak.export_failed": {"en": "Export failed", "ko": "내보내기 실패"},
+    "bak.imported": {"en": "Imported: {name}", "ko": "가져오기 완료: {name}"},
+    "bak.import_failed": {"en": "Import failed", "ko": "가져오기 실패"},
+    "bak.no_source": {"en": "Nothing to backup (source not found)", "ko": "백업할 대상이 없습니다 (소스 없음)"},
 }
 
 

@@ -44,6 +44,8 @@ SESSION_ENV_DIR = CLAUDE_DIR / "session-env"
 FILE_HISTORY_DIR = CLAUDE_DIR / "file-history"
 DEBUG_DIR = CLAUDE_DIR / "debug"
 TODOS_DIR = CLAUDE_DIR / "todos"
+PLUGINS_DIR = CLAUDE_DIR / "plugins"
+SKILLS_DIR = CLAUDE_DIR / "skills"
 BACKUP_BASE_DIR = Path.home() / ".cc-tui" / "backups"
 
 
@@ -122,6 +124,7 @@ class BackupInfo:
     path: str
     created: float = 0
     size_bytes: int = 0
+    backup_type: str = ""  # config, full, settings, plugins, sessions
 
 
 @dataclass
