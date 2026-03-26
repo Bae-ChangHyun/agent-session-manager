@@ -2,18 +2,35 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import sys
+import tarfile
 from datetime import datetime
 from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import BACKUP_BASE_DIR, CLAUDE_DIR, CLAUDE_JSON, BackupInfo
+from cc_tui.models import (
+    BACKUP_BASE_DIR,
+    CLAUDE_DIR,
+    CLAUDE_JSON,
+    PLUGINS_DIR,
+    PROJECTS_DIR,
+    SKILLS_DIR,
+    BackupInfo,
+)
 
 logger = logging.getLogger(__name__)
+
+# Settings files to back up
+SETTINGS_FILES = [
+    CLAUDE_DIR / "settings.json",
+    CLAUDE_DIR / "settings.local.json",
+    CLAUDE_DIR / "keybindings.json",
+]
+
+_SYMLINKS_ON = sys.platform != "win32"
 
 
 def _validate_backup_path(path: Path) -> None:
@@ -27,6 +44,14 @@ def _ensure_backup_dir() -> Path:
     """Ensure backup directory exists."""
     BACKUP_BASE_DIR.mkdir(parents=True, exist_ok=True)
     return BACKUP_BASE_DIR
+
+
+def _dir_size(path: Path) -> int:
+    """Calculate total size of all files in a directory tree."""
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+# ── Create backups ───────────────────────────────────────────────
 
 
 def create_config_backup() -> str | None:
@@ -55,7 +80,7 @@ def create_full_backup() -> str | None:
             shutil.copytree(
                 str(CLAUDE_DIR),
                 str(backup_dir / ".claude"),
-                symlinks=(sys.platform != "win32"),
+                symlinks=_SYMLINKS_ON,
                 ignore_dangling_symlinks=True,
             )
         if CLAUDE_JSON.exists():
@@ -66,11 +91,85 @@ def create_full_backup() -> str | None:
         return None
 
 
+def create_settings_backup() -> str | None:
+    """Backup settings.json, settings.local.json, keybindings.json."""
+    existing = [f for f in SETTINGS_FILES if f.exists()]
+    if not existing:
+        return None
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = _ensure_backup_dir() / f"settings-{timestamp}"
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for f in existing:
+            shutil.copy2(str(f), str(backup_dir / f.name))
+        return str(backup_dir)
+    except OSError as e:
+        logger.warning("Failed to create settings backup: %s", e)
+        if backup_dir.exists():
+            shutil.rmtree(str(backup_dir), ignore_errors=True)
+        return None
+
+
+def create_plugins_backup() -> str | None:
+    """Backup plugins/ and skills/ directories (including symlinks)."""
+    if not PLUGINS_DIR.exists() and not SKILLS_DIR.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = _ensure_backup_dir() / f"plugins-{timestamp}"
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        if PLUGINS_DIR.exists():
+            shutil.copytree(
+                str(PLUGINS_DIR),
+                str(backup_dir / "plugins"),
+                symlinks=_SYMLINKS_ON,
+                ignore_dangling_symlinks=True,
+            )
+        if SKILLS_DIR.exists():
+            shutil.copytree(
+                str(SKILLS_DIR),
+                str(backup_dir / "skills"),
+                symlinks=_SYMLINKS_ON,
+                ignore_dangling_symlinks=True,
+            )
+        return str(backup_dir)
+    except OSError as e:
+        logger.warning("Failed to create plugins backup: %s", e)
+        if backup_dir.exists():
+            shutil.rmtree(str(backup_dir), ignore_errors=True)
+        return None
+
+
+def create_sessions_backup() -> str | None:
+    """Backup projects/ directory (session data)."""
+    if not PROJECTS_DIR.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = _ensure_backup_dir() / f"sessions-{timestamp}"
+    try:
+        shutil.copytree(
+            str(PROJECTS_DIR),
+            str(backup_dir / "projects"),
+            symlinks=_SYMLINKS_ON,
+            ignore_dangling_symlinks=True,
+        )
+        return str(backup_dir)
+    except OSError as e:
+        logger.warning("Failed to create sessions backup: %s", e)
+        if backup_dir.exists():
+            shutil.rmtree(str(backup_dir), ignore_errors=True)
+        return None
+
+
+# ── List backups ─────────────────────────────────────────────────
+
+
 def list_backups() -> list[BackupInfo]:
     """List all available backups."""
     backup_dir = _ensure_backup_dir()
     result = []
 
+    # Config backups (single files in config/)
     config_dir = backup_dir / "config"
     if config_dir.exists():
         for f in sorted(config_dir.iterdir(), reverse=True):
@@ -82,24 +181,71 @@ def list_backups() -> list[BackupInfo]:
                         path=str(f),
                         created=stat.st_mtime,
                         size_bytes=stat.st_size,
+                        backup_type="config",
                     )
                 )
 
+    # Directory-based backups: full, settings, plugins, sessions
+    _TYPE_PREFIXES = {
+        "full-": "full",
+        "settings-": "settings",
+        "plugins-": "plugins",
+        "sessions-": "sessions",
+    }
     for d in sorted(backup_dir.iterdir(), reverse=True):
-        if d.is_dir() and d.name.startswith("full-"):
-            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-            stat = d.stat()
-            result.append(
-                BackupInfo(
-                    name=f"[full] {d.name}",
-                    path=str(d),
-                    created=stat.st_mtime,
-                    size_bytes=size,
+        if not d.is_dir():
+            continue
+        for prefix, btype in _TYPE_PREFIXES.items():
+            if d.name.startswith(prefix):
+                size = _dir_size(d)
+                stat = d.stat()
+                result.append(
+                    BackupInfo(
+                        name=f"[{btype}] {d.name}",
+                        path=str(d),
+                        created=stat.st_mtime,
+                        size_bytes=size,
+                        backup_type=btype,
+                    )
                 )
-            )
+                break
 
     result.sort(key=lambda b: b.created, reverse=True)
     return result
+
+
+# ── Symlink detection ────────────────────────────────────────────
+
+
+def detect_symlinks(path: Path) -> list[str]:
+    """Find all symlinks in a directory tree. Returns list of relative path strings."""
+    symlinks = []
+    if not path.exists():
+        return symlinks
+    for item in path.rglob("*"):
+        if item.is_symlink():
+            target = str(item.resolve()) if item.exists() else "(broken)"
+            rel = str(item.relative_to(path))
+            symlinks.append(f"{rel} -> {target}")
+    return symlinks
+
+
+def detect_broken_symlinks(path: Path) -> list[str]:
+    """Find symlinks whose targets don't exist. Returns list of relative path strings."""
+    broken = []
+    if not path.exists():
+        return broken
+    for item in path.rglob("*"):
+        if item.is_symlink():
+            target = item.resolve()
+            if not target.exists():
+                rel = str(item.relative_to(path))
+                raw_target = str(Path(str(item)).readlink())
+                broken.append(f"{rel} -> {raw_target}")
+    return broken
+
+
+# ── Restore backups ──────────────────────────────────────────────
 
 
 def restore_config_backup(backup_path: str) -> bool:
@@ -188,6 +334,98 @@ def restore_full_backup(backup_path: str) -> bool:
         return False
 
 
+def restore_settings_backup(backup_path: str) -> bool:
+    """Restore settings files from a backup directory."""
+    src = Path(backup_path)
+    if not src.exists():
+        return False
+    try:
+        _validate_backup_path(src)
+        # Safety: backup current settings first
+        create_settings_backup()
+        for f in src.iterdir():
+            if f.is_file() and f.suffix == ".json":
+                dest = CLAUDE_DIR / f.name
+                shutil.copy2(str(f), str(dest))
+        return True
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore settings backup: %s", e)
+        return False
+
+
+def restore_plugins_backup(backup_path: str) -> tuple[bool, list[str]]:
+    """Restore plugins/skills from a backup directory.
+
+    Returns (success, list of symlink warnings).
+    Symlink-based items are restored but a warning is returned for broken ones.
+    """
+    src = Path(backup_path)
+    if not src.exists():
+        return False, []
+    try:
+        _validate_backup_path(src)
+        # Safety: backup current plugins first
+        create_plugins_backup()
+
+        plugins_src = src / "plugins"
+        skills_src = src / "skills"
+
+        if plugins_src.exists():
+            if PLUGINS_DIR.exists():
+                shutil.rmtree(str(PLUGINS_DIR))
+            shutil.copytree(
+                str(plugins_src), str(PLUGINS_DIR),
+                symlinks=_SYMLINKS_ON,
+                ignore_dangling_symlinks=True,
+            )
+
+        if skills_src.exists():
+            if SKILLS_DIR.exists():
+                shutil.rmtree(str(SKILLS_DIR))
+            shutil.copytree(
+                str(skills_src), str(SKILLS_DIR),
+                symlinks=_SYMLINKS_ON,
+                ignore_dangling_symlinks=True,
+            )
+
+        # Detect broken symlinks after restore
+        broken = []
+        broken.extend(detect_broken_symlinks(PLUGINS_DIR))
+        broken.extend(detect_broken_symlinks(SKILLS_DIR))
+
+        return True, broken
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore plugins backup: %s", e)
+        return False, []
+
+
+def restore_sessions_backup(backup_path: str) -> bool:
+    """Restore projects/ directory from a backup."""
+    src = Path(backup_path)
+    projects_src = src / "projects"
+    if not src.exists() or not projects_src.exists():
+        return False
+    try:
+        _validate_backup_path(src)
+        # Safety: backup current sessions first
+        create_sessions_backup()
+
+        if PROJECTS_DIR.exists():
+            shutil.rmtree(str(PROJECTS_DIR))
+        shutil.copytree(
+            str(projects_src), str(PROJECTS_DIR),
+            symlinks=_SYMLINKS_ON,
+            ignore_dangling_symlinks=True,
+        )
+        return True
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore sessions backup: %s", e)
+        return False
+
+
+# ── Delete backup ────────────────────────────────────────────────
+
+
 def delete_backup(backup_path: str) -> bool:
     """Delete a backup (moves to OS trash for safety)."""
     p = Path(backup_path)
@@ -200,3 +438,81 @@ def delete_backup(backup_path: str) -> bool:
     except (OSError, ValueError) as e:
         logger.warning("Failed to delete backup: %s", e)
         return False
+
+
+# ── Export / Import ──────────────────────────────────────────────
+
+
+def export_backup(backup_path: str, dest_dir: str | None = None) -> str | None:
+    """Export a backup as .tar.gz for server migration.
+
+    Args:
+        backup_path: Path to the backup (file or directory).
+        dest_dir: Where to write the archive. Defaults to ~/Desktop or home.
+
+    Returns:
+        Path to the created .tar.gz or None on failure.
+    """
+    src = Path(backup_path)
+    if not src.exists():
+        return None
+    try:
+        _validate_backup_path(src)
+        if dest_dir:
+            out_dir = Path(dest_dir)
+        else:
+            desktop = Path.home() / "Desktop"
+            out_dir = desktop if desktop.exists() else Path.home()
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        archive_name = src.name if src.is_dir() else src.stem
+        archive_path = out_dir / f"{archive_name}.tar.gz"
+
+        # Avoid overwrite
+        counter = 1
+        while archive_path.exists():
+            archive_path = out_dir / f"{archive_name}_{counter}.tar.gz"
+            counter += 1
+
+        with tarfile.open(str(archive_path), "w:gz") as tar:
+            tar.add(str(src), arcname=src.name)
+
+        return str(archive_path)
+    except (OSError, ValueError, tarfile.TarError) as e:
+        logger.warning("Failed to export backup: %s", e)
+        return None
+
+
+def import_backup(archive_path: str) -> str | None:
+    """Import a .tar.gz backup into the backup directory.
+
+    Returns the extracted backup path or None on failure.
+    """
+    src = Path(archive_path)
+    if not src.exists() or not src.name.endswith(".tar.gz"):
+        return None
+    try:
+        backup_dir = _ensure_backup_dir()
+
+        with tarfile.open(str(src), "r:gz") as tar:
+            # Security: check for path traversal
+            for member in tar.getmembers():
+                member_path = Path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError(f"Unsafe path in archive: {member.name}")
+            # Python 3.12+ supports filter param; older versions don't
+            try:
+                tar.extractall(path=str(backup_dir), filter="data")
+            except TypeError:
+                tar.extractall(path=str(backup_dir))
+
+        # Determine the extracted name (first component of archive contents)
+        with tarfile.open(str(src), "r:gz") as tar:
+            names = tar.getnames()
+            if names:
+                top = names[0].split("/")[0]
+                return str(backup_dir / top)
+        return None
+    except (OSError, ValueError, tarfile.TarError) as e:
+        logger.warning("Failed to import backup: %s", e)
+        return None

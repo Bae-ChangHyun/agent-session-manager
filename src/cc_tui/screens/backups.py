@@ -11,10 +11,19 @@ from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.backup import (
     create_config_backup,
     create_full_backup,
+    create_plugins_backup,
+    create_sessions_backup,
+    create_settings_backup,
     delete_backup,
+    detect_symlinks,
+    export_backup,
+    import_backup,
     list_backups,
     restore_config_backup,
     restore_full_backup,
+    restore_plugins_backup,
+    restore_sessions_backup,
+    restore_settings_backup,
 )
 from cc_tui.utils import format_bytes
 from cc_tui.widgets.action_bar import ActionBar
@@ -24,10 +33,16 @@ class BackupsPane(Container):
     """View, create, restore, and manage backups."""
 
     BINDINGS = [
+        ("space", "toggle_select", "Select"),
         ("c", "config_backup", "Config Backup"),
         ("b", "full_backup", "Full Backup"),
+        ("s", "settings_backup", "Settings Backup"),
+        ("p", "plugins_backup", "Plugins Backup"),
+        ("S", "sessions_backup", "Sessions Backup"),
         ("R", "restore_backup", "Restore"),
         ("d", "delete_backup", "Delete"),
+        ("e", "export_backup", "Export"),
+        ("i", "import_backup", "Import"),
     ]
 
     CSS = """
@@ -40,7 +55,11 @@ class BackupsPane(Container):
         margin-bottom: 1;
         color: $text-muted;
     }
-    #backup-actions {
+    #backup-create-actions {
+        height: 1;
+        margin-bottom: 0;
+    }
+    #backup-manage-actions {
         height: 1;
         margin-bottom: 1;
     }
@@ -50,31 +69,51 @@ class BackupsPane(Container):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            t("bak.info"),
-            id="backups-info",
-        )
-        yield ActionBar(id="backup-actions")
+        yield Static(t("bak.info"), id="backups-info")
+        yield ActionBar(id="backup-create-actions")
+        yield ActionBar(id="backup-manage-actions")
         yield DataTable(id="backups-table")
 
     def on_mount(self) -> None:
-        self._backups: dict = {}
+        self._backups: dict[str, object] = {}
+        self._selected: set[str] = set()
+        self._row_display: dict[str, str] = {}
+
         table = self.query_one("#backups-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns("Name", "Created", "Size", "Path")
+
         self._render_actions()
         self.refresh_data()
 
+    # ── Actions bar ──────────────────────────────────────────
+
     def _render_actions(self) -> None:
-        actions = [
+        # Row 1: Create buttons
+        create_actions = [
             ("config-backup", t("bak.btn_config"), "#0178d4"),
+            ("settings-backup", t("bak.btn_settings"), "#0178d4"),
+            ("plugins-backup", t("bak.btn_plugins"), "#0178d4"),
+            ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
             ("full-backup", t("bak.btn_full"), "#0178d4"),
-            ("restore", t("bak.btn_restore"), "#4EBF71"),
-            ("delete", t("bak.btn_delete"), "#ba3c5b"),
         ]
-        bar = self.query_one("#backup-actions", ActionBar)
-        bar.set_actions(actions, on_action=self._handle_action)
+        bar1 = self.query_one("#backup-create-actions", ActionBar)
+        bar1.set_actions(create_actions, on_action=self._handle_action)
+
+        # Row 2: Manage buttons
+        sel = len(self._selected)
+        del_label = t("bak.btn_delete") + (f" ({sel})" if sel else "")
+        manage_actions = [
+            ("restore", t("bak.btn_restore"), "#4EBF71"),
+            ("delete", del_label, "#ba3c5b"),
+            ("export", t("bak.btn_export"), "#8B5CF6"),
+            ("import", t("bak.btn_import"), "#8B5CF6"),
+        ]
+        bar2 = self.query_one("#backup-manage-actions", ActionBar)
+        bar2.set_actions(manage_actions, on_action=self._handle_action)
+
+    # ── Data loading ─────────────────────────────────────────
 
     def refresh_data(self) -> None:
         self.run_worker(self._load, thread=True)
@@ -87,9 +126,20 @@ class BackupsPane(Container):
         table = self.query_one("#backups-table", DataTable)
         table.clear()
         self._backups = {b.name: b for b in backups}
+        self._selected.clear()
+        self._row_display = {}
         for b in backups:
-            created = datetime.fromtimestamp(b.created).strftime("%Y-%m-%d %H:%M:%S") if b.created else "N/A"
-            table.add_row(b.name, created, format_bytes(b.size_bytes), b.path, key=b.name)
+            created = (
+                datetime.fromtimestamp(b.created).strftime("%Y-%m-%d %H:%M:%S")
+                if b.created
+                else "N/A"
+            )
+            display = b.name
+            self._row_display[b.name] = display
+            table.add_row(display, created, format_bytes(b.size_bytes), b.path, key=b.name)
+        self._render_actions()
+
+    # ── Selection ────────────────────────────────────────────
 
     def _get_selected_backup(self):
         table = self.query_one("#backups-table", DataTable)
@@ -98,11 +148,42 @@ class BackupsPane(Container):
             return self._backups.get(row_key.value)
         return None
 
+    def action_toggle_select(self) -> None:
+        """Toggle selection on the current row (spacebar)."""
+        table = self.query_one("#backups-table", DataTable)
+        if table.cursor_row is None or table.row_count == 0:
+            return
+        row_key = list(table.rows.keys())[table.cursor_row]
+        name = row_key.value
+        if name not in self._row_display:
+            return
+        name_col = list(table.columns.keys())[0]
+        if name in self._selected:
+            self._selected.discard(name)
+            table.update_cell(row_key, name_col, self._row_display[name])
+        else:
+            self._selected.add(name)
+            table.update_cell(
+                row_key, name_col, f"[bold green]●[/] {self._row_display[name]}"
+            )
+        self._render_actions()
+
+    # ── Keybinding actions ───────────────────────────────────
+
     def action_config_backup(self) -> None:
         self._handle_action("config-backup")
 
     def action_full_backup(self) -> None:
         self._handle_action("full-backup")
+
+    def action_settings_backup(self) -> None:
+        self._handle_action("settings-backup")
+
+    def action_plugins_backup(self) -> None:
+        self._handle_action("plugins-backup")
+
+    def action_sessions_backup(self) -> None:
+        self._handle_action("sessions-backup")
 
     def action_restore_backup(self) -> None:
         self._handle_action("restore")
@@ -110,36 +191,64 @@ class BackupsPane(Container):
     def action_delete_backup(self) -> None:
         self._handle_action("delete")
 
+    def action_export_backup(self) -> None:
+        self._handle_action("export")
+
+    def action_import_backup(self) -> None:
+        self._handle_action("import")
+
+    # ── Action dispatcher ────────────────────────────────────
+
     def _handle_action(self, action_id: str) -> None:
+        # Create actions
         if action_id == "config-backup":
             self.run_worker(self._do_config_backup, thread=True)
         elif action_id == "full-backup":
             self.app.push_screen(
                 ConfirmScreen(t("bak.confirm_full")),
-                callback=lambda ok: self.run_worker(self._do_full_backup, thread=True) if ok else None,
+                callback=lambda ok: self.run_worker(self._do_full_backup, thread=True)
+                if ok
+                else None,
             )
+        elif action_id == "settings-backup":
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_settings")),
+                callback=lambda ok: self.run_worker(self._do_settings_backup, thread=True)
+                if ok
+                else None,
+            )
+        elif action_id == "plugins-backup":
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_plugins")),
+                callback=lambda ok: self.run_worker(self._do_plugins_backup, thread=True)
+                if ok
+                else None,
+            )
+        elif action_id == "sessions-backup":
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_sessions")),
+                callback=lambda ok: self.run_worker(self._do_sessions_backup, thread=True)
+                if ok
+                else None,
+            )
+        # Manage actions
         elif action_id == "restore":
-            backup = self._get_selected_backup()
-            if backup:
-                is_full = "[full]" in backup.name
-                self.app.push_screen(
-                    ConfirmScreen(t("bak.confirm_restore", name=backup.name)),
-                    callback=lambda ok, b=backup, f=is_full: self._do_restore(b, f) if ok else None,
-                )
+            self._click_restore()
         elif action_id == "delete":
-            backup = self._get_selected_backup()
-            if backup:
-                self.app.push_screen(
-                    ConfirmScreen(t("bak.confirm_delete", name=backup.name)),
-                    callback=lambda ok, b=backup: self._do_delete(b) if ok else None,
-                )
+            self._click_delete()
+        elif action_id == "export":
+            self._click_export()
+        elif action_id == "import":
+            self._click_import()
+
+    # ── Create workers ───────────────────────────────────────
 
     def _do_config_backup(self) -> None:
         path = create_config_backup()
         if path:
             self.app.call_from_thread(self.app.notify, t("bak.config_created", path=path))
         else:
-            self.app.call_from_thread(self.app.notify, t("bak.backup_failed"), severity="error")
+            self.app.call_from_thread(self.app.notify, t("bak.no_source"), severity="warning")
         self.app.call_from_thread(self.refresh_data)
 
     def _do_full_backup(self) -> None:
@@ -148,27 +257,215 @@ class BackupsPane(Container):
         if path:
             self.app.call_from_thread(self.app.notify, t("bak.full_created", path=path))
         else:
-            self.app.call_from_thread(self.app.notify, t("bak.backup_failed"), severity="error")
+            self.app.call_from_thread(
+                self.app.notify, t("bak.backup_failed"), severity="error"
+            )
         self.app.call_from_thread(self.refresh_data)
 
-    def _do_restore(self, backup, is_full: bool) -> None:
+    def _do_settings_backup(self) -> None:
+        path = create_settings_backup()
+        if path:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.settings_created", path=path)
+            )
+        else:
+            self.app.call_from_thread(self.app.notify, t("bak.no_source"), severity="warning")
+        self.app.call_from_thread(self.refresh_data)
+
+    def _do_plugins_backup(self) -> None:
+        self.app.call_from_thread(self.app.notify, t("bak.plugins_creating"))
+        path = create_plugins_backup()
+        if path:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.plugins_created", path=path)
+            )
+        else:
+            self.app.call_from_thread(self.app.notify, t("bak.no_source"), severity="warning")
+        self.app.call_from_thread(self.refresh_data)
+
+    def _do_sessions_backup(self) -> None:
+        self.app.call_from_thread(self.app.notify, t("bak.sessions_creating"))
+        path = create_sessions_backup()
+        if path:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.sessions_created", path=path)
+            )
+        else:
+            self.app.call_from_thread(self.app.notify, t("bak.no_source"), severity="warning")
+        self.app.call_from_thread(self.refresh_data)
+
+    # ── Restore ──────────────────────────────────────────────
+
+    def _click_restore(self) -> None:
+        backup = self._get_selected_backup()
+        if not backup:
+            return
+        # For plugins, show symlink info in confirmation
+        extra = ""
+        if backup.backup_type == "plugins":
+            from pathlib import Path as P
+
+            syms = detect_symlinks(P(backup.path))
+            if syms:
+                items_str = "\n".join(f"  - {s}" for s in syms[:10])
+                if len(syms) > 10:
+                    items_str += f"\n  ... +{len(syms) - 10} more"
+                extra = f"\n\n[yellow]Symlinks detected ({len(syms)}):[/]\n{items_str}\n[dim]Broken symlink targets will be warned after restore.[/]"
+
+        msg = t("bak.confirm_restore", name=backup.name) + extra
+        self.app.push_screen(
+            ConfirmScreen(msg),
+            callback=lambda ok, b=backup: self._do_restore(b) if ok else None,
+        )
+
+    def _do_restore(self, backup) -> None:
         def _work():
-            if is_full:
-                ok = restore_full_backup(backup.path)
-            else:
+            btype = backup.backup_type
+            if btype == "config":
                 ok = restore_config_backup(backup.path)
-            if ok:
-                self.app.call_from_thread(self.app.notify, t("bak.restored", name=backup.name))
+                self._notify_restore(ok, backup.name)
+            elif btype == "full":
+                ok = restore_full_backup(backup.path)
+                self._notify_restore(ok, backup.name)
+            elif btype == "settings":
+                ok = restore_settings_backup(backup.path)
+                self._notify_restore(ok, backup.name)
+            elif btype == "plugins":
+                ok, broken = restore_plugins_backup(backup.path)
+                if ok and broken:
+                    items = "\n".join(f"  {s}" for s in broken[:10])
+                    if len(broken) > 10:
+                        items += f"\n  ... +{len(broken) - 10} more"
+                    self.app.call_from_thread(
+                        self.app.notify,
+                        t(
+                            "bak.symlink_warning",
+                            count=len(broken),
+                            items=items,
+                        ),
+                        severity="warning",
+                        timeout=15,
+                    )
+                self._notify_restore(ok, backup.name)
+            elif btype == "sessions":
+                ok = restore_sessions_backup(backup.path)
+                self._notify_restore(ok, backup.name)
             else:
-                self.app.call_from_thread(self.app.notify, t("bak.restore_failed"), severity="error")
+                # Legacy: guess from name
+                is_full = "[full]" in backup.name
+                if is_full:
+                    ok = restore_full_backup(backup.path)
+                else:
+                    ok = restore_config_backup(backup.path)
+                self._notify_restore(ok, backup.name)
             self.app.call_from_thread(self.refresh_data)
+
         self.run_worker(_work, thread=True)
+
+    def _notify_restore(self, ok: bool, name: str) -> None:
+        if ok:
+            self.app.call_from_thread(self.app.notify, t("bak.restored", name=name))
+        else:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.restore_failed"), severity="error"
+            )
+
+    # ── Delete ───────────────────────────────────────────────
+
+    def _click_delete(self) -> None:
+        # Multi-select mode
+        if self._selected:
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_bulk_delete", count=len(self._selected))),
+                callback=lambda ok: self._do_bulk_delete() if ok else None,
+            )
+            return
+        # Single select (cursor)
+        backup = self._get_selected_backup()
+        if backup:
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_delete", name=backup.name)),
+                callback=lambda ok, b=backup: self._do_delete(b) if ok else None,
+            )
 
     def _do_delete(self, backup) -> None:
         def _work():
             if delete_backup(backup.path):
-                self.app.call_from_thread(self.app.notify, t("bak.deleted", name=backup.name))
+                self.app.call_from_thread(
+                    self.app.notify, t("bak.deleted", name=backup.name)
+                )
             else:
-                self.app.call_from_thread(self.app.notify, t("bak.delete_failed"), severity="error")
+                self.app.call_from_thread(
+                    self.app.notify, t("bak.delete_failed"), severity="error"
+                )
             self.app.call_from_thread(self.refresh_data)
+
         self.run_worker(_work, thread=True)
+
+    def _do_bulk_delete(self) -> None:
+        names = list(self._selected)
+
+        def _work():
+            ok_count = 0
+            fail_count = 0
+            for name in names:
+                b = self._backups.get(name)
+                if b and delete_backup(b.path):
+                    ok_count += 1
+                else:
+                    fail_count += 1
+            self.app.call_from_thread(
+                self.app.notify,
+                t("bak.bulk_deleted", ok=ok_count, fail=fail_count),
+            )
+            self.app.call_from_thread(self.refresh_data)
+
+        self.run_worker(_work, thread=True)
+
+    # ── Export ───────────────────────────────────────────────
+
+    def _click_export(self) -> None:
+        backup = self._get_selected_backup()
+        if not backup:
+            return
+        self.run_worker(lambda: self._do_export(backup), thread=True)
+
+    def _do_export(self, backup) -> None:
+        path = export_backup(backup.path)
+        if path:
+            self.app.call_from_thread(self.app.notify, t("bak.exported", path=path))
+        else:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.export_failed"), severity="error"
+            )
+
+    # ── Import ───────────────────────────────────────────────
+
+    def _click_import(self) -> None:
+        """Open file input for importing a .tar.gz backup."""
+        from cc_tui.screens.input_dialog import InputDialog
+
+        self.app.push_screen(
+            InputDialog(
+                "Import Backup",
+                "Enter path to .tar.gz file:",
+            ),
+            callback=self._on_import_path,
+        )
+
+    def _on_import_path(self, path: str | None) -> None:
+        if not path or not path.strip():
+            return
+        self.run_worker(lambda: self._do_import(path.strip()), thread=True)
+
+    def _do_import(self, archive_path: str) -> None:
+        result = import_backup(archive_path)
+        if result:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.imported", name=result)
+            )
+        else:
+            self.app.call_from_thread(
+                self.app.notify, t("bak.import_failed"), severity="error"
+            )
+        self.app.call_from_thread(self.refresh_data)
