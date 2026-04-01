@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Button, DataTable, Static
+from textual.binding import Binding
+from textual.containers import Container, VerticalScroll
+from textual.message import Message
+from textual.widgets import DataTable, Static
 
 from cc_tui.i18n import t
 from cc_tui.services.claude_data import get_period_usage, get_stats, get_usage_data
@@ -19,11 +21,70 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
+class PeriodSelector(Static):
+    """Compact one-line period selector."""
+
+    class Changed(Message):
+        """Posted when the selected period changes."""
+
+        def __init__(self, period: str) -> None:
+            self.period = period
+            super().__init__()
+
+    CSS = """
+    PeriodSelector {
+        height: 1;
+        margin: 0 0 1 0;
+    }
+    """
+
+    _OPTIONS = [("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")]
+
+    def __init__(self, period: str = "daily", **kwargs):
+        super().__init__(**kwargs)
+        self._selected = period
+        self._segments: list[tuple[int, int, str]] = []
+
+    def on_mount(self) -> None:
+        self.refresh()
+
+    def set_period(self, period: str) -> None:
+        self._selected = period
+        self.refresh()
+
+    def render(self) -> str:
+        parts: list[str] = []
+        self._segments = []
+        cursor = 0
+        for i, (key, label) in enumerate(self._OPTIONS):
+            is_selected = key == self._selected
+            style = "bold white on blue" if is_selected else "bold white on rgb(35,35,35)"
+            text = f" {label} "
+            self._segments.append((cursor, cursor + len(text), key))
+            parts.append(f"[{style}]{text}[/]")
+            cursor += len(text)
+            if i < len(self._OPTIONS) - 1:
+                parts.append(" ")
+                cursor += 1
+        return "".join(parts)
+
+    def on_click(self, event) -> None:
+        for start, end, key in self._segments:
+            if start <= event.x < end:
+                if self._selected != key:
+                    self._selected = key
+                    self.refresh()
+                    self.post_message(self.Changed(self._selected))
+                break
+
+
 class DashboardPane(Container):
     BINDINGS = [
-        ("1", "period('daily')", "Daily"),
-        ("2", "period('weekly')", "Weekly"),
-        ("3", "period('monthly')", "Monthly"),
+        Binding("tab", "period_next", "Next Period", show=False, priority=True),
+        Binding("shift+tab", "period_prev", "Previous Period", show=False, priority=True),
+        Binding("1", "period('daily')", "Daily"),
+        Binding("2", "period('weekly')", "Weekly"),
+        Binding("3", "period('monthly')", "Monthly"),
     ]
 
     CSS = """
@@ -42,19 +103,6 @@ class DashboardPane(Container):
     .dash-table {
         height: auto;
         margin: 0 0 0 2;
-    }
-    #period-tabs {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-    .period-tab {
-        min-width: 12;
-        margin-right: 1;
-    }
-    .period-tab.-active {
-        background: $accent;
-        color: $text;
-        text-style: bold;
     }
     #period-table {
         height: auto;
@@ -85,10 +133,7 @@ class DashboardPane(Container):
             yield Static("", id="dash-cost-title", classes="dash-title")
             yield Static("", id="dash-model-table", classes="dash-table")
             yield Static("", id="dash-div-2")
-            with Horizontal(id="period-tabs"):
-                yield Button("Daily", id="period-daily", classes="period-tab")
-                yield Button("Weekly", id="period-weekly", classes="period-tab")
-                yield Button("Monthly", id="period-monthly", classes="period-tab")
+            yield PeriodSelector(id="period-tabs")
             yield DataTable(id="period-table")
             yield Static("", id="dash-div-3")
             yield Static("", id="dash-top-title", classes="dash-title")
@@ -199,10 +244,9 @@ class DashboardPane(Container):
 
     def _render_period_section(self) -> None:
         """Render the period table from cache."""
-        for key in ("daily", "weekly", "monthly"):
-            button = self.query_one(f"#period-{key}", Button)
-            button.set_class(key == self._period, "-active")
+        self.query_one("#period-tabs", PeriodSelector).set_period(self._period)
 
+        period_loaded = self._period in self._cached_periods
         period_data = self._cached_periods.get(self._period, [])
         pt = self.query_one("#period-table", DataTable)
         pt.clear()
@@ -217,14 +261,14 @@ class DashboardPane(Container):
                     _fmt_tokens(p["total_output"]),
                     _fmt_tokens(p["total_cache"]),
                 )
+        elif not period_loaded:
+            pt.add_row(t("dash.loading_period"), "", "", "", "", "")
         else:
             pt.add_row(t("dash.no_data"), "", "", "", "", "")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle dashboard period button presses."""
-        if event.button.id not in {"period-daily", "period-weekly", "period-monthly"}:
-            return
-        self.action_period(event.button.id.replace("period-", ""))
+    def on_period_selector_changed(self, event: PeriodSelector.Changed) -> None:
+        """Handle period changes from the selector widget."""
+        self.action_period(event.period)
 
     def action_period(self, key: str) -> None:
         """Switch period via keyboard (1/2/3)."""
@@ -234,6 +278,18 @@ class DashboardPane(Container):
         else:
             self._render_period_section()
             self.run_worker(lambda k=key: self._load_period(k), thread=True)
+
+    def action_period_next(self) -> None:
+        """Cycle to the next dashboard period immediately."""
+        order = ["daily", "weekly", "monthly"]
+        idx = order.index(self._period)
+        self.action_period(order[(idx + 1) % len(order)])
+
+    def action_period_prev(self) -> None:
+        """Cycle to the previous dashboard period immediately."""
+        order = ["daily", "weekly", "monthly"]
+        idx = order.index(self._period)
+        self.action_period(order[(idx - 1) % len(order)])
 
     def _load_period(self, key: str) -> None:
         data = get_period_usage(key)

@@ -32,6 +32,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     # ── Dashboard ──
     "dash.loading": {"en": "Loading dashboard data...", "ko": "대시보드 데이터 로딩 중..."},
+    "dash.loading_period": {"en": "Loading...", "ko": "로딩 중..."},
     "dash.total_cost": {"en": "Total Cost", "ko": "총 비용"},
     "dash.top_projects": {"en": "Top Projects by Cost", "ko": "비용 상위 프로젝트"},
     "dash.top10": {"en": "Top 10", "ko": "상위 10개"},
