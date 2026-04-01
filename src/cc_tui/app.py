@@ -88,7 +88,7 @@ class CCTuiApp(App):
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""
-        for pane in self.query("DashboardPane, ProjectsPane, FileHistoryPane, DebugTodosPane, MigratePane"):
+        for pane in self.query("DashboardPane, ProjectsPane, FileHistoryPane, DebugTodosPane, MigratePane, BackupsPane"):
             if hasattr(pane, "refresh_data"):
                 pane.refresh_data()
         self.notify(t("app.refreshed"))

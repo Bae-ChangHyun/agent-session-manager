@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
 import tarfile
@@ -49,6 +50,18 @@ def _ensure_backup_dir() -> Path:
 def _dir_size(path: Path) -> int:
     """Calculate total size of all files in a directory tree."""
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _is_safe_tar_member(member: tarfile.TarInfo) -> bool:
+    """Return True when an archive member is safe to extract."""
+    member_path = Path(member.name)
+    if member_path.is_absolute() or ".." in member_path.parts:
+        return False
+    if member.issym() or member.islnk():
+        return False
+    if member.isdev():
+        return False
+    return True
 
 
 # ── Create backups ───────────────────────────────────────────────
@@ -281,7 +294,7 @@ def restore_full_backup(backup_path: str) -> bool:
         claude_backup = src / ".claude"
         json_backup = src / ".claude.json"
         temp_dir = CLAUDE_DIR.with_name(".claude.restoring")
-        temp_json = CLAUDE_JSON.with_suffix(".restoring")
+        temp_json = CLAUDE_JSON.with_name(f"{CLAUDE_JSON.name}.restoring")
 
         # Phase 1: Prepare .claude.json copy to temp (validate before touching anything)
         if json_backup.exists():
@@ -322,7 +335,7 @@ def restore_full_backup(backup_path: str) -> bool:
 
         # Phase 3: Atomically move .claude.json (rename is atomic on same filesystem)
         if temp_json.exists():
-            temp_json.rename(CLAUDE_JSON)
+            os.replace(temp_json, CLAUDE_JSON)
 
         # Phase 4: Cleanup
         if temp_dir.exists():
@@ -495,16 +508,15 @@ def import_backup(archive_path: str) -> str | None:
         backup_dir = _ensure_backup_dir()
 
         with tarfile.open(str(src), "r:gz") as tar:
-            # Security: check for path traversal
-            for member in tar.getmembers():
-                member_path = Path(member.name)
-                if member_path.is_absolute() or ".." in member_path.parts:
+            members = tar.getmembers()
+            for member in members:
+                if not _is_safe_tar_member(member):
                     raise ValueError(f"Unsafe path in archive: {member.name}")
             # Python 3.12+ supports filter param; older versions don't
             try:
-                tar.extractall(path=str(backup_dir), filter="data")
+                tar.extractall(path=str(backup_dir), members=members, filter="data")
             except TypeError:
-                tar.extractall(path=str(backup_dir))
+                tar.extractall(path=str(backup_dir), members=members)
 
         # Determine the extracted name (first component of archive contents)
         with tarfile.open(str(src), "r:gz") as tar:
