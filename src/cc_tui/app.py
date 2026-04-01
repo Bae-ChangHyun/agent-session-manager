@@ -38,6 +38,8 @@ class CCTuiApp(App):
     """
 
     BINDINGS = [
+        Binding("tab", "tab_nav_next", "Next", show=False, priority=True),
+        Binding("shift+tab", "tab_nav_prev", "Previous", show=False, priority=True),
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("f1", "tab('tab-dashboard')", "Dashboard"),
@@ -85,6 +87,22 @@ class CCTuiApp(App):
     def action_tab(self, tab_id: str) -> None:
         """Switch to a specific tab by ID."""
         self.query_one("#main-tabs", TabbedContent).active = tab_id
+
+    def action_tab_nav_next(self) -> None:
+        """Handle Tab navigation, with dashboard period cycling override."""
+        tabs = self.query_one("#main-tabs", TabbedContent)
+        if tabs.active == "tab-dashboard":
+            self.query_one("DashboardPane").action_period_next()
+            return
+        self.screen.focus_next()
+
+    def action_tab_nav_prev(self) -> None:
+        """Handle reverse Tab navigation, with dashboard period cycling override."""
+        tabs = self.query_one("#main-tabs", TabbedContent)
+        if tabs.active == "tab-dashboard":
+            self.query_one("DashboardPane").action_period_prev()
+            return
+        self.screen.focus_previous()
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""

@@ -15,8 +15,6 @@ from cc_tui.screens import migrate as migrate_screen
 from cc_tui.screens import projects as projects_screen
 from cc_tui.services import backup as backup_service
 from cc_tui.services import claude_data, cleaner, migrate
-from textual.widgets import Button
-
 
 def _fake_send2trash(path: str) -> None:
     target = Path(path)
@@ -297,14 +295,13 @@ def test_app_feature_smoke(monkeypatch, tmp_path: Path):
             await pilot.pause()
             app.action_tab("tab-dashboard")
             await pilot.pause()
-            weekly_button = app.query_one("#period-weekly", Button)
-            weekly_button.focus()
+            await pilot.press("tab")
             await pilot.pause()
-            await pilot.press("enter")
-            await pilot.pause()
-            assert "period-weekly" == app.focused.id
             dashboard = app.query_one("DashboardPane")
             assert dashboard._period == "weekly"
+            await pilot.press("tab")
+            await pilot.pause()
+            assert dashboard._period == "monthly"
             app.action_tab("tab-projects")
             await pilot.pause()
             app.action_tab("tab-file-history")
