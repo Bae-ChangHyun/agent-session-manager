@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll
-from textual.widgets import DataTable, Static
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.widgets import Button, DataTable, Static
 
 from cc_tui.i18n import t
 from cc_tui.services.claude_data import get_period_usage, get_stats, get_usage_data
@@ -44,8 +44,17 @@ class DashboardPane(Container):
         margin: 0 0 0 2;
     }
     #period-tabs {
-        height: 1;
-        margin: 0;
+        height: auto;
+        margin: 0 0 1 0;
+    }
+    .period-tab {
+        min-width: 12;
+        margin-right: 1;
+    }
+    .period-tab.-active {
+        background: $accent;
+        color: $text;
+        text-style: bold;
     }
     #period-table {
         height: auto;
@@ -76,7 +85,10 @@ class DashboardPane(Container):
             yield Static("", id="dash-cost-title", classes="dash-title")
             yield Static("", id="dash-model-table", classes="dash-table")
             yield Static("", id="dash-div-2")
-            yield Static("", id="period-tabs")
+            with Horizontal(id="period-tabs"):
+                yield Button("Daily", id="period-daily", classes="period-tab")
+                yield Button("Weekly", id="period-weekly", classes="period-tab")
+                yield Button("Monthly", id="period-monthly", classes="period-tab")
             yield DataTable(id="period-table")
             yield Static("", id="dash-div-3")
             yield Static("", id="dash-top-title", classes="dash-title")
@@ -187,13 +199,9 @@ class DashboardPane(Container):
 
     def _render_period_section(self) -> None:
         """Render the period table from cache."""
-        tabs = []
-        for key, label in (("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")):
-            if key == self._period:
-                tabs.append(f"[bold white on blue] {label} [/]")
-            else:
-                tabs.append(f"[bold] {label} [/]")
-        self.query_one("#period-tabs", Static).update("  ".join(tabs))
+        for key in ("daily", "weekly", "monthly"):
+            button = self.query_one(f"#period-{key}", Button)
+            button.set_class(key == self._period, "-active")
 
         period_data = self._cached_periods.get(self._period, [])
         pt = self.query_one("#period-table", DataTable)
@@ -212,27 +220,11 @@ class DashboardPane(Container):
         else:
             pt.add_row(t("dash.no_data"), "", "", "", "", "")
 
-    _PERIOD_LABELS = [("daily", 8), ("weekly", 9), ("monthly", 10)]
-
-    def on_click(self, event) -> None:
-        """Handle period tab clicks - load on first click, cache after."""
-        widget = event.widget
-        if getattr(widget, "id", "") != "period-tabs":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle dashboard period button presses."""
+        if event.button.id not in {"period-daily", "period-weekly", "period-monthly"}:
             return
-        x = event.x
-        pos = 1
-        key = "monthly"  # default to last
-        for label, width in self._PERIOD_LABELS:
-            if x < pos + width:
-                key = label
-                break
-            pos += width + 2
-        self._period = key
-        if key in self._cached_periods:
-            self._render_period_section()
-        else:
-            self._render_period_section()  # Show empty/loading while fetching
-            self.run_worker(lambda k=key: self._load_period(k), thread=True)
+        self.action_period(event.button.id.replace("period-", ""))
 
     def action_period(self, key: str) -> None:
         """Switch period via keyboard (1/2/3)."""
