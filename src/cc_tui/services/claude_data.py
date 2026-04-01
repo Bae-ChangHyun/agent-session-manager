@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -116,23 +117,50 @@ def get_project_paths() -> set[str]:
     return set(data.get("projects", {}).keys())
 
 
+def _build_encoded_to_paths_map() -> dict[str, list[str]]:
+    """Build encoded project-dir name -> project paths mapping."""
+    encoded_to_paths: dict[str, list[str]] = defaultdict(list)
+    for path_str in sorted(get_project_paths()):
+        encoded_to_paths[encode_path(path_str)].append(path_str)
+    return dict(encoded_to_paths)
+
+
+def _resolve_project_dir(project_ref: str | None) -> Path | None:
+    """Resolve a project path or already-encoded directory name to a projects dir."""
+    if not project_ref:
+        return None
+    direct = PROJECTS_DIR / project_ref
+    if direct.exists():
+        return direct
+    encoded = encode_path(project_ref)
+    candidate = PROJECTS_DIR / encoded
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _project_label_for_dir(dir_name: str, encoded_to_paths: dict[str, list[str]]) -> str:
+    """Return a readable project label for a Claude projects dir."""
+    matches = encoded_to_paths.get(dir_name, [])
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return f"[ambiguous] {' | '.join(matches)}"
+    return decode_path_hint(dir_name)
+
+
 def get_sessions() -> list[SessionInfo]:
     """Get all session data directories."""
     if not PROJECTS_DIR.exists():
         return []
     result = []
-    project_paths = get_project_paths()
+    encoded_to_paths = _build_encoded_to_paths_map()
     try:
         for d in sorted(PROJECTS_DIR.iterdir()):
             if not d.is_dir():
                 continue
             actual_path = d.name
-            # Check if this session dir corresponds to any project
-            is_orphaned = True
-            for pp in project_paths:
-                if encode_path(pp) == actual_path:
-                    is_orphaned = False
-                    break
+            is_orphaned = actual_path not in encoded_to_paths
 
             result.append(
                 SessionInfo(
@@ -197,9 +225,8 @@ def _get_sessions_via_jsonl(project_dir: str | None) -> list[SessionDetail]:
     """Fallback: parse JSONL session files directly."""
     search_dirs = []
     if project_dir:
-        encoded = encode_path(project_dir)
-        p = PROJECTS_DIR / encoded
-        if p.exists():
+        p = _resolve_project_dir(project_dir)
+        if p and p.exists():
             search_dirs.append(p)
     else:
         if PROJECTS_DIR.exists():
@@ -248,6 +275,8 @@ def _get_sessions_via_jsonl(project_dir: str | None) -> list[SessionDetail]:
 
 def get_session_messages(session_id: str, project_dir: str | None = None, limit: int = 50) -> list[dict]:
     """Get messages from a session. Uses SDK if available, fallback to JSONL."""
+    if project_dir and (PROJECTS_DIR / project_dir).exists():
+        return _get_messages_via_jsonl(session_id, project_dir, limit)
     try:
         return _get_messages_via_sdk(session_id, project_dir, limit)
     except Exception:
@@ -273,9 +302,9 @@ def _get_messages_via_jsonl(session_id: str, project_dir: str | None, limit: int
     # Find the JSONL file
     jsonl_path = None
     if project_dir:
-        encoded = encode_path(project_dir)
-        candidate = PROJECTS_DIR / encoded / f"{session_id}.jsonl"
-        if candidate.exists():
+        project_root = _resolve_project_dir(project_dir)
+        candidate = project_root / f"{session_id}.jsonl" if project_root else None
+        if candidate and candidate.exists():
             jsonl_path = candidate
     else:
         if PROJECTS_DIR.exists():
@@ -408,13 +437,12 @@ def _get_active_session_ids() -> set[str]:
 def get_session_to_project_map() -> dict[str, str]:
     """Build session_id → project_path mapping."""
     mapping: dict[str, str] = {}
-    project_paths = get_project_paths()
-    encoded_to_path = {encode_path(p): p for p in project_paths}
+    encoded_to_paths = _build_encoded_to_paths_map()
     if PROJECTS_DIR.exists():
         try:
             for d in PROJECTS_DIR.iterdir():
                 if d.is_dir():
-                    project_path = encoded_to_path.get(d.name, decode_path_hint(d.name))
+                    project_path = _project_label_for_dir(d.name, encoded_to_paths)
                     for jsonl in d.glob("*.jsonl"):
                         mapping[jsonl.stem] = project_path
         except (PermissionError, OSError):
@@ -681,10 +709,10 @@ def get_usage_data() -> dict:
 
 def get_project_sessions(project_path: str) -> list[SessionDetail]:
     """Get sessions specifically for one project."""
-    encoded = encode_path(project_path)
-    project_dir = PROJECTS_DIR / encoded
-    if not project_dir.exists():
+    project_dir = _resolve_project_dir(project_path)
+    if not project_dir:
         return []
+    encoded = project_dir.name
 
     result = []
     for jsonl in sorted(project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True):

@@ -353,7 +353,7 @@ class ProjectsPane(Container):
         body.update(detail)
 
     def _load_messages(self, session_id: str, project_dir: str | None) -> None:
-        messages = get_session_messages(session_id, limit=50)
+        messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
         self.app.call_from_thread(self._show_messages, session_id, messages)
 
     def _show_messages(self, session_id: str, messages: list[dict]) -> None:
@@ -373,7 +373,7 @@ class ProjectsPane(Container):
             else:
                 if len(content) > 500:
                     content = content[:500] + "..."
-                lines.append(f"[bold cyan]Assistant:[/]\n{content}\n")
+                lines.append(f"[bold cyan]Assistant:[/]\n{escape(content)}\n")
         body.update("\n".join(lines))
 
     def action_trash_session(self) -> None:

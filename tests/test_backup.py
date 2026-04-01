@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tarfile
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ from cc_tui.services.backup import (
     export_backup,
     import_backup,
     list_backups,
+    restore_full_backup,
     restore_plugins_backup,
     restore_sessions_backup,
     restore_settings_backup,
@@ -249,14 +251,26 @@ class TestExportImport:
 
     def test_import_rejects_absolute_path(self, tmp_path: Path):
         """Archives with absolute paths should be rejected."""
-        import io
-
         archive = tmp_path / "abs.tar.gz"
         with tarfile.open(str(archive), "w:gz") as tar:
             data = b"evil"
             info = tarfile.TarInfo(name="/tmp/evil.txt")
             info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+            tar.addfile(info, BytesIO(data))
+
+        with patch("cc_tui.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
+            result = import_backup(str(archive))
+
+        assert result is None
+
+    @pytest.mark.skipif(os.name == "nt", reason="Symlink archive members differ on Windows")
+    def test_import_rejects_symlink_member(self, tmp_path: Path):
+        archive = tmp_path / "symlink.tar.gz"
+        with tarfile.open(str(archive), "w:gz") as tar:
+            info = tarfile.TarInfo(name="settings-test/link")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/tmp/evil-target"
+            tar.addfile(info)
 
         with patch("cc_tui.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = import_backup(str(archive))
@@ -342,6 +356,41 @@ class TestRestoreSettings:
         assert ok
         content = (fake_claude / "settings.json").read_text()
         assert '"new"' in content
+
+
+class TestRestoreFullBackup:
+    def test_restore_full_uses_os_replace_for_json(self, tmp_path: Path):
+        fake_claude_dir = tmp_path / ".claude"
+        fake_claude_dir.mkdir()
+        (fake_claude_dir / "old.txt").write_text("old")
+        fake_claude_json = tmp_path / ".claude.json"
+        fake_claude_json.write_text('{"old": true}')
+
+        backup_dir = tmp_path / "backups" / "full-test"
+        (backup_dir / ".claude").mkdir(parents=True)
+        (backup_dir / ".claude" / "new.txt").write_text("new")
+        (backup_dir / ".claude.json").write_text('{"new": true}')
+
+        replace_calls: list[tuple[Path, Path]] = []
+        real_replace = os.replace
+
+        def tracked_replace(src, dst):
+            replace_calls.append((Path(src), Path(dst)))
+            return real_replace(src, dst)
+
+        with (
+            patch("cc_tui.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"),
+            patch("cc_tui.services.backup.CLAUDE_DIR", fake_claude_dir),
+            patch("cc_tui.services.backup.CLAUDE_JSON", fake_claude_json),
+            patch("cc_tui.services.backup.create_full_backup", return_value=str(tmp_path / "safety")),
+            patch("cc_tui.services.backup.os.replace", side_effect=tracked_replace),
+        ):
+            ok = restore_full_backup(str(backup_dir))
+
+        assert ok is True
+        assert replace_calls
+        assert replace_calls[-1][1] == fake_claude_json
+        assert fake_claude_json.read_text() == '{"new": true}'
 
 
 # ---------------------------------------------------------------------------

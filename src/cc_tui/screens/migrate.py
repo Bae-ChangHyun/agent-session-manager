@@ -359,7 +359,7 @@ class MigratePane(Container):
 
     def _load_session_preview(self, session_id: str) -> None:
         """Load messages for a session and show in preview."""
-        messages = get_session_messages(session_id, limit=20)
+        messages = get_session_messages(session_id, project_dir=self._source_encoded, limit=20)
         self.app.call_from_thread(self._show_session_preview, session_id, messages)
 
     def _show_session_preview(self, session_id: str, messages: list[dict]) -> None:
