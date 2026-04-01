@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-D97757?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Textual](https://img.shields.io/badge/Textual-TUI-D97757?style=for-the-badge)](https://github.com/Textualize/textual)
 [![License](https://img.shields.io/badge/License-MIT-D97757?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Linux%20%7C%20macOS-1A1915?style=for-the-badge)](#)
+[![Platform](https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-1A1915?style=for-the-badge)](#)
 
 사용량 통계 · 세션 정리 · 마이그레이션 · 백업/복원 — 터미널에서 한눈에
 
@@ -90,12 +90,15 @@ cd cc-session-utils
 uv sync && uv run cc-tui
 ```
 
+설치 후에는 `cc-tui`와 `cc-session-utils` 두 실행 명령이 함께 생기며, 둘 다 같은 앱을 실행합니다.
+
 ---
 
 ## 사용법
 
 ```bash
 cc-tui                          # 기본 실행
+cc-session-utils                # 같은 앱을 실행하는 다른 명령어
 cc-tui --path /your/project     # 특정 프로젝트 필터링
 cc-tui --lang ko                # 한국어 UI
 ```
@@ -105,6 +108,8 @@ cc-tui --lang ko                # 한국어 UI
 | 키 | 동작 |
 |:---:|:---|
 | `F1`~`F6` | 탭 전환 |
+| `Tab` / `Shift+Tab` | 대시보드 기간(Daily / Weekly / Monthly) 순환 |
+| `1` / `2` / `3` | 대시보드 기간 바로 전환 |
 | `q` | 앱 종료 |
 | `r` | 전체 새로고침 |
 | `d` / `D` | 선택 삭제 / 전체 Orphaned 삭제 |

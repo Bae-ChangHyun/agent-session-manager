@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-D97757?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Textual](https://img.shields.io/badge/Textual-TUI-D97757?style=for-the-badge)](https://github.com/Textualize/textual)
 [![License](https://img.shields.io/badge/License-MIT-D97757?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Linux%20%7C%20macOS-1A1915?style=for-the-badge)](#)
+[![Platform](https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-1A1915?style=for-the-badge)](#)
 
 Dashboard · Session cleanup · Migration · Backup/Restore — all in your terminal
 
@@ -90,12 +90,15 @@ cd cc-session-utils
 uv sync && uv run cc-tui
 ```
 
+Both `cc-tui` and `cc-session-utils` are installed as launch commands and start the same app.
+
 ---
 
 ## Usage
 
 ```bash
 cc-tui                          # Launch
+cc-session-utils                # Same app, alternate command name
 cc-tui --path /your/project     # Filter to project
 cc-tui --lang ko                # Korean UI
 ```
@@ -105,6 +108,8 @@ cc-tui --lang ko                # Korean UI
 | Key | Action |
 |:---:|:---|
 | `F1`–`F6` | Switch tabs |
+| `Tab` / `Shift+Tab` | Cycle dashboard period (Daily / Weekly / Monthly) |
+| `1` / `2` / `3` | Switch dashboard period directly |
 | `q` | Quit |
 | `r` | Refresh all |
 | `d` / `D` | Trash selected / all orphaned |
