@@ -7,7 +7,7 @@ from pathlib import PurePath
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Static, Tree
+from textual.widgets import Input, Static, Tree
 
 from rich.markup import escape
 
@@ -47,6 +47,9 @@ class ProjectsPane(Container):
     #projects-layout {
         height: 1fr;
     }
+    #projects-filter {
+        margin-bottom: 1;
+    }
     #projects-tree-panel {
         width: 1fr;
         height: 1fr;
@@ -84,6 +87,7 @@ class ProjectsPane(Container):
             t("proj.info"),
             id="projects-info",
         )
+        yield Input(placeholder=t("proj.filter_placeholder"), id="projects-filter")
         with Horizontal(id="projects-layout"):
             with Vertical(id="projects-tree-panel"):
                 yield Tree("Projects", id="project-tree")
@@ -102,6 +106,10 @@ class ProjectsPane(Container):
         self._selected_session: tuple[str, str | None] | None = None
         self._selected_session_node = None
         self._project_map: dict[str, ProjectInfo] = {}
+        self._all_projects: list[ProjectInfo] = []
+        self._all_orphaned_sessions = []
+        self._filter_query = ""
+        self._sort_mode = "path"
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -117,7 +125,33 @@ class ProjectsPane(Container):
         if self.app.target_path:
             projects = [p for p in projects if p.path == self.app.target_path]
             orphaned_sessions = []
-        self.app.call_from_thread(self._build_tree, projects, orphaned_sessions)
+        self.app.call_from_thread(self._set_project_data, projects, orphaned_sessions)
+
+    def _set_project_data(self, projects: list[ProjectInfo], orphaned_sessions) -> None:
+        self._all_projects = projects
+        self._all_orphaned_sessions = orphaned_sessions or []
+        self._build_tree_from_state()
+
+    def _build_tree_from_state(self) -> None:
+        projects = list(self._all_projects)
+        orphaned_sessions = list(self._all_orphaned_sessions)
+        query = self._filter_query.casefold()
+
+        if query:
+            projects = [p for p in projects if query in p.path.casefold()]
+            orphaned_sessions = [
+                s for s in orphaned_sessions
+                if query in s.dir_name.casefold() or query in PurePath(s.actual_path).name.casefold()
+            ]
+
+        if self._sort_mode == "cost":
+            projects.sort(key=lambda p: (-(p.last_cost or 0), p.path.casefold()))
+        elif self._sort_mode == "status":
+            projects.sort(key=lambda p: (p.exists, p.path.casefold()))
+        else:
+            projects.sort(key=lambda p: p.path.casefold())
+
+        self._build_tree(projects, orphaned_sessions)
 
     def _build_tree(self, projects: list[ProjectInfo], orphaned_sessions=None) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -132,7 +166,7 @@ class ProjectsPane(Container):
         # Build a proper tree structure by inserting each path into a nested dict
         root_nodes: dict = {}  # nested dict structure
 
-        for p in sorted(projects, key=lambda x: x.path):
+        for p in projects:
             parts = PurePath(p.path).parts  # ('/', 'home', 'bch', 'Project', ...)
             current = root_nodes
             for part in parts:
@@ -148,12 +182,16 @@ class ProjectsPane(Container):
     def _render_tree_actions(self) -> None:
         """Render orphaned sessions action bar below tree."""
         bar = self.query_one("#tree-actions", ActionBar)
+        sort_labels = {
+            "path": t("proj.sort_path"),
+            "cost": t("proj.sort_cost"),
+            "status": t("proj.sort_status"),
+        }
+        actions = [("sort-projects", t("proj.btn_sort", mode=sort_labels[self._sort_mode]), "#555555")]
         count = len(self._orphaned_session_dirs)
         if count > 0:
-            actions = [("trash-orphaned-sessions", t("proj.btn_trash_orphaned", count=count), "#ba3c5b")]
-            bar.set_actions(actions, on_action=self._handle_action)
-        else:
-            bar.set_actions([], on_action=self._handle_action)
+            actions.append(("trash-orphaned-sessions", t("proj.btn_trash_orphaned", count=count), "#ba3c5b"))
+        bar.set_actions(actions, on_action=self._handle_action)
 
     def _render_detail_actions(self, show_trash_session=False, show_remove_config=False) -> None:
         """Render detail panel action bar."""
@@ -167,7 +205,7 @@ class ProjectsPane(Container):
 
     def _render_tree_nodes(self, parent_node, node_dict: dict, current_path: str, all_paths: set):
         """Recursively render tree, collapsing single-child intermediate directories."""
-        for key, children in sorted(node_dict.items()):
+        for key, children in node_dict.items():
             if key == "__project__":
                 continue
 
@@ -386,7 +424,14 @@ class ProjectsPane(Container):
         self._handle_action("remove-config")
 
     def _handle_action(self, action_id: str) -> None:
-        if action_id == "trash-session":
+        if action_id == "sort-projects":
+            self._sort_mode = {
+                "path": "cost",
+                "cost": "status",
+                "status": "path",
+            }[self._sort_mode]
+            self._build_tree_from_state()
+        elif action_id == "trash-session":
             session = getattr(self, "_selected_session", None)
             if not session:
                 return
@@ -470,3 +515,9 @@ class ProjectsPane(Container):
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "projects-filter":
+            return
+        self._filter_query = event.value.strip()
+        self._build_tree_from_state()

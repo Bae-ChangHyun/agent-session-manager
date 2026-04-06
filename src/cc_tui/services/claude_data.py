@@ -11,6 +11,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_SDK_FALLBACK_EXCEPTIONS = (
+    ImportError,
+    ModuleNotFoundError,
+    OSError,
+    ValueError,
+    TypeError,
+    AttributeError,
+)
+
 
 from cc_tui.models import (
     CLAUDE_DIR,
@@ -194,7 +203,7 @@ def get_session_details(project_dir: str | None = None) -> list[SessionDetail]:
     """Get detailed session info using SDK if available, fallback to JSONL parsing."""
     try:
         return _get_sessions_via_sdk(project_dir)
-    except Exception:
+    except _SDK_FALLBACK_EXCEPTIONS:
         logger.debug("SDK path failed for get_session_details, falling back to JSONL", exc_info=True)
         return _get_sessions_via_jsonl(project_dir)
 
@@ -275,11 +284,12 @@ def _get_sessions_via_jsonl(project_dir: str | None) -> list[SessionDetail]:
 
 def get_session_messages(session_id: str, project_dir: str | None = None, limit: int = 50) -> list[dict]:
     """Get messages from a session. Uses SDK if available, fallback to JSONL."""
-    if project_dir and (PROJECTS_DIR / project_dir).exists():
+    if project_dir and _resolve_project_dir(project_dir):
         return _get_messages_via_jsonl(session_id, project_dir, limit)
     try:
         return _get_messages_via_sdk(session_id, project_dir, limit)
-    except Exception:
+    except _SDK_FALLBACK_EXCEPTIONS:
+        logger.debug("SDK path failed for get_session_messages, falling back to JSONL", exc_info=True)
         return _get_messages_via_jsonl(session_id, project_dir, limit)
 
 

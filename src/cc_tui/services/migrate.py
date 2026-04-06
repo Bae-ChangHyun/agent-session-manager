@@ -98,11 +98,8 @@ def migrate_sessions(
 
     # Overwrite mode: clear existing
     if mode == "overwrite":
-        for f in target_dir.glob("*.jsonl"):
-            send2trash(str(f))
-        idx = target_dir / "sessions-index.json"
-        if idx.exists():
-            send2trash(str(idx))
+        for existing in target_dir.iterdir():
+            send2trash(str(existing))
 
     # Copy sessions
     copied = 0

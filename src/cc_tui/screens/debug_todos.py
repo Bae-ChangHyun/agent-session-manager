@@ -4,7 +4,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from cc_tui.models import DEBUG_DIR, TODOS_DIR
 from cc_tui.screens.confirm import ConfirmScreen
@@ -46,6 +46,9 @@ class DebugTodosPane(Container):
     #dt-layout {
         height: 1fr;
     }
+    #dt-filter {
+        margin-bottom: 1;
+    }
     #dt-tables-panel {
         width: 1fr;
         height: 1fr;
@@ -79,6 +82,7 @@ class DebugTodosPane(Container):
             t("dt.info"),
             id="dt-info",
         )
+        yield Input(placeholder=t("dt.filter_placeholder"), id="dt-filter")
         with Horizontal(id="dt-layout"):
             with Vertical(id="dt-tables-panel"):
                 with Vertical(classes="dt-section"):
@@ -122,6 +126,10 @@ class DebugTodosPane(Container):
         self._todo_row_display: dict[str, str] = {}
         self._debug_group_items: dict[str, list[str]] = {}
         self._todo_group_items: dict[str, list[str]] = {}
+        self._filter_query = ""
+        self._sort_mode = "project"
+        self._all_debug = []
+        self._all_todos = []
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -133,19 +141,31 @@ class DebugTodosPane(Container):
         empty_debug = count_empty_files(DEBUG_DIR)
         empty_todo = count_empty_files(TODOS_DIR)
         session_to_project = get_session_to_project_map()
-        self.app.call_from_thread(self._update, debug, todos, empty_debug, empty_todo, session_to_project)
+        self.app.call_from_thread(self._set_data, debug, todos, empty_debug, empty_todo, session_to_project)
 
-    def _update(self, debug, todos, empty_debug: int = 0, empty_todo: int = 0, session_to_project: dict = None) -> None:
+    def _set_data(self, debug, todos, empty_debug: int = 0, empty_todo: int = 0, session_to_project: dict = None) -> None:
+        self._all_debug = list(debug)
+        self._all_todos = list(todos)
+        self._empty_debug = empty_debug
+        self._empty_todo = empty_todo
+        self._session_to_project = session_to_project or {}
+        self._update()
+
+    def _update(self) -> None:
+        debug = list(self._all_debug)
+        todos = list(self._all_todos)
+        query = self._filter_query.casefold()
+        if query:
+            debug = [entry for entry in debug if self._matches_query(entry.name, entry)]
+            todos = [entry for entry in todos if self._matches_query(entry.name, entry)]
+
         self._debug_entries = {d.name: d for d in debug}
         self._todo_entries = {td.name: td for td in todos}
-        self._session_to_project = session_to_project or {}
 
         orphaned_debug = sum(1 for d in debug if d.is_orphaned)
         orphaned_todos = sum(1 for td in todos if td.is_orphaned)
         self._orphaned_debug_names = [d.name for d in debug if d.is_orphaned]
         self._orphaned_todo_names = [td.name for td in todos if td.is_orphaned]
-        self._empty_debug = empty_debug
-        self._empty_todo = empty_todo
 
         self.query_one("#debug-title", Static).update(
             f"[bold]Debug Files[/]  [dim]({len(debug)}, orphaned: [yellow]{orphaned_debug}[/])[/]"
@@ -188,6 +208,12 @@ class DebugTodosPane(Container):
         self._render_debug_actions()
         self._render_todo_actions()
 
+    def _matches_query(self, name: str, entry) -> bool:
+        session_id = name.split("-agent-")[0] if "-agent-" in name else name.split(".")[0]
+        project = self._session_to_project.get(session_id, "")
+        haystack = f"{name} {project}".casefold()
+        return self._filter_query.casefold() in haystack
+
     def _populate_grouped_table(self, table: DataTable, entries, key_fn):
         """Populate a DataTable with entries grouped by project.
 
@@ -206,6 +232,11 @@ class DebugTodosPane(Container):
                 session_id = key_fn(e)
                 project = self._session_to_project.get(session_id, session_id)
                 groups[project].append(e)
+
+        if self._sort_mode == "size":
+            orphaned.sort(key=lambda e: (-e.size_bytes, e.name.casefold()))
+        else:
+            orphaned.sort(key=lambda e: e.name.casefold())
 
         # Orphaned group first
         if orphaned:
@@ -226,8 +257,25 @@ class DebugTodosPane(Container):
                 )
 
         # Active groups by project
-        for project in sorted(groups.keys()):
+        if self._sort_mode == "size":
+            group_names = sorted(
+                groups.keys(),
+                key=lambda project: (
+                    -sum(entry.size_bytes for entry in groups[project]),
+                    project.casefold(),
+                ),
+            )
+        else:
+            group_names = sorted(groups.keys(), key=str.casefold)
+
+        for project in group_names:
             items = groups[project]
+            if self._sort_mode == "size":
+                items = sorted(items, key=lambda e: (-e.size_bytes, e.name.casefold()))
+            elif self._sort_mode == "status":
+                items = sorted(items, key=lambda e: (e.is_orphaned, e.name.casefold()))
+            else:
+                items = sorted(items, key=lambda e: e.name.casefold())
             total_size = sum(e.size_bytes for e in items)
             hdr = f"__hdr_{project}__"
             table.add_row(
@@ -316,7 +364,15 @@ class DebugTodosPane(Container):
     def _render_debug_actions(self) -> None:
         sel = len(self._selected_debug)
         trash_label = t("dt.btn_trash_debug") + (f" ({sel})" if sel else "")
-        actions = [("trash-debug", trash_label, "#e8890c")]
+        sort_labels = {
+            "project": t("dt.sort_project"),
+            "size": t("dt.sort_size"),
+            "status": t("dt.sort_status"),
+        }
+        actions = [
+            ("sort-dt", t("dt.btn_sort", mode=sort_labels[self._sort_mode]), "#555555"),
+            ("trash-debug", trash_label, "#e8890c"),
+        ]
         if self._empty_debug > 0:
             actions.append(("prune-debug", t("dt.btn_prune_debug", count=self._empty_debug), "#0178d4"))
         if len(self._orphaned_debug_names) > 0:
@@ -327,7 +383,15 @@ class DebugTodosPane(Container):
     def _render_todo_actions(self) -> None:
         sel = len(self._selected_todo)
         trash_label = t("dt.btn_trash_todo") + (f" ({sel})" if sel else "")
-        actions = [("trash-todo", trash_label, "#e8890c")]
+        sort_labels = {
+            "project": t("dt.sort_project"),
+            "size": t("dt.sort_size"),
+            "status": t("dt.sort_status"),
+        }
+        actions = [
+            ("sort-dt", t("dt.btn_sort", mode=sort_labels[self._sort_mode]), "#555555"),
+            ("trash-todo", trash_label, "#e8890c"),
+        ]
         if self._empty_todo > 0:
             actions.append(("prune-todo", t("dt.btn_prune_todo", count=self._empty_todo), "#0178d4"))
         if len(self._orphaned_todo_names) > 0:
@@ -382,7 +446,14 @@ class DebugTodosPane(Container):
         body.update(text)
 
     def _handle_action(self, action_id: str) -> None:
-        if action_id == "trash-debug":
+        if action_id == "sort-dt":
+            self._sort_mode = {
+                "project": "size",
+                "size": "status",
+                "status": "project",
+            }[self._sort_mode]
+            self._update()
+        elif action_id == "trash-debug":
             # Multi-select mode
             if self._selected_debug:
                 names = list(self._selected_debug)
@@ -536,3 +607,9 @@ class DebugTodosPane(Container):
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "dt-filter":
+            return
+        self._filter_query = event.value.strip()
+        self._update()
