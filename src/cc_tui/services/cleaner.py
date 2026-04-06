@@ -11,6 +11,7 @@ from pathlib import Path
 from send2trash import send2trash
 
 from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TODOS_DIR
+from cc_tui.services.recovery import create_recovery_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def trash_session(dir_name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
+        create_recovery_snapshot(resolved, "session")
         _trash_related_session_envs(dir_name)
         _log_trash(resolved, "session")
         send2trash(str(resolved))
@@ -87,6 +89,7 @@ def _trash_related_session_envs(dir_name: str) -> None:
             if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
                 try:
                     resolved_d = _validate_path(d)
+                    create_recovery_snapshot(resolved_d, "session-env")
                     _log_trash(resolved_d, "session-env")
                     send2trash(str(resolved_d))
                 except (ValueError, PermissionError, OSError) as e:
@@ -102,6 +105,7 @@ def trash_single_session_file(project_encoded: str, session_id: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
+        create_recovery_snapshot(resolved, "session")
         _log_trash(resolved, "session")
         send2trash(str(resolved))
         return True
@@ -117,6 +121,7 @@ def trash_file_history(dir_name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
+        create_recovery_snapshot(resolved, "file_history")
         _log_trash(resolved, "file_history")
         send2trash(str(resolved))
         return True
@@ -143,6 +148,7 @@ def trash_debug_file(name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
+        create_recovery_snapshot(resolved, "debug")
         _log_trash(resolved, "debug")
         send2trash(str(resolved))
         return True
@@ -169,6 +175,7 @@ def trash_todo_file(name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
+        create_recovery_snapshot(resolved, "todo")
         _log_trash(resolved, "todo")
         send2trash(str(resolved))
         return True
@@ -210,6 +217,7 @@ def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int
             content = f.read_text(errors="replace").strip()
             if content in ("[]", "{}", ""):
                 resolved_f = _validate_path(f)
+                create_recovery_snapshot(resolved_f, category)
                 _log_trash(resolved_f, category)
                 send2trash(str(resolved_f))
                 ok += 1
@@ -246,6 +254,7 @@ def trash_path(path: str | Path) -> bool:
         return False
     try:
         resolved = _validate_path(p)
+        create_recovery_snapshot(resolved, "generic")
         _log_trash(resolved, "generic")
         send2trash(str(resolved))
         return True

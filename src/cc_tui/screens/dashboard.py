@@ -5,8 +5,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
-from textual.message import Message
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Static, TabPane, TabbedContent
 
 from cc_tui.i18n import t
 from cc_tui.services.claude_data import get_period_usage, get_stats, get_usage_data
@@ -19,63 +18,6 @@ def _fmt_tokens(n: int) -> str:
     if n >= 1_000:
         return f"{n / 1_000:.1f}K"
     return str(n)
-
-
-class PeriodSelector(Static):
-    """Compact one-line period selector."""
-
-    class Changed(Message):
-        """Posted when the selected period changes."""
-
-        def __init__(self, period: str) -> None:
-            self.period = period
-            super().__init__()
-
-    CSS = """
-    PeriodSelector {
-        height: 1;
-        margin: 0 0 1 0;
-    }
-    """
-
-    _OPTIONS = [("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")]
-
-    def __init__(self, period: str = "daily", **kwargs):
-        super().__init__(**kwargs)
-        self._selected = period
-        self._segments: list[tuple[int, int, str]] = []
-
-    def on_mount(self) -> None:
-        self.refresh()
-
-    def set_period(self, period: str) -> None:
-        self._selected = period
-        self.refresh()
-
-    def render(self) -> str:
-        parts: list[str] = []
-        self._segments = []
-        cursor = 0
-        for i, (key, label) in enumerate(self._OPTIONS):
-            is_selected = key == self._selected
-            style = "bold white on blue" if is_selected else "bold white on rgb(35,35,35)"
-            text = f" {label} "
-            self._segments.append((cursor, cursor + len(text), key))
-            parts.append(f"[{style}]{text}[/]")
-            cursor += len(text)
-            if i < len(self._OPTIONS) - 1:
-                parts.append(" ")
-                cursor += 1
-        return "".join(parts)
-
-    def on_click(self, event) -> None:
-        for start, end, key in self._segments:
-            if start <= event.x < end:
-                if self._selected != key:
-                    self._selected = key
-                    self.refresh()
-                    self.post_message(self.Changed(self._selected))
-                break
 
 
 class DashboardPane(Container):
@@ -104,7 +46,15 @@ class DashboardPane(Container):
         height: auto;
         margin: 0 0 0 2;
     }
-    #period-table {
+    #period-tabs {
+        height: auto;
+        margin: 0;
+    }
+    .period-pane {
+        padding: 0;
+        height: auto;
+    }
+    .period-table {
         height: auto;
         margin: 0;
     }
@@ -112,7 +62,7 @@ class DashboardPane(Container):
 
     CONTENT_IDS = (
         "dash-header", "dash-div-1", "dash-cost-title", "dash-model-table",
-        "dash-div-2", "period-tabs", "period-table",
+        "dash-div-2", "period-tabs",
         "dash-div-3", "dash-top-title", "dash-top-projects",
         "dash-div-4", "dash-overview-title", "dash-overview",
     )
@@ -133,8 +83,13 @@ class DashboardPane(Container):
             yield Static("", id="dash-cost-title", classes="dash-title")
             yield Static("", id="dash-model-table", classes="dash-table")
             yield Static("", id="dash-div-2")
-            yield PeriodSelector(id="period-tabs")
-            yield DataTable(id="period-table")
+            with TabbedContent(initial="period-daily", id="period-tabs"):
+                with TabPane("Daily", id="period-daily", classes="period-pane"):
+                    yield DataTable(id="period-table-daily", classes="period-table")
+                with TabPane("Weekly", id="period-weekly", classes="period-pane"):
+                    yield DataTable(id="period-table-weekly", classes="period-table")
+                with TabPane("Monthly", id="period-monthly", classes="period-pane"):
+                    yield DataTable(id="period-table-monthly", classes="period-table")
             yield Static("", id="dash-div-3")
             yield Static("", id="dash-top-title", classes="dash-title")
             yield Static("", id="dash-top-projects", classes="dash-table")
@@ -145,11 +100,11 @@ class DashboardPane(Container):
     def on_mount(self) -> None:
         for wid in self.CONTENT_IDS:
             self.query_one(f"#{wid}").display = False
-        # Setup period table
-        pt = self.query_one("#period-table", DataTable)
-        pt.zebra_stripes = True
-        pt.show_cursor = False
-        pt.add_columns("Period", "Cost", "Messages", "Input", "Output", "Cache")
+        for key in ("daily", "weekly", "monthly"):
+            pt = self._get_period_table(key)
+            pt.zebra_stripes = True
+            pt.show_cursor = False
+            pt.add_columns("Period", "Cost", "Messages", "Input", "Output", "Cache")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -244,11 +199,11 @@ class DashboardPane(Container):
 
     def _render_period_section(self) -> None:
         """Render the period table from cache."""
-        self.query_one("#period-tabs", PeriodSelector).set_period(self._period)
+        self.query_one("#period-tabs", TabbedContent).active = f"period-{self._period}"
 
         period_loaded = self._period in self._cached_periods
         period_data = self._cached_periods.get(self._period, [])
-        pt = self.query_one("#period-table", DataTable)
+        pt = self._get_period_table(self._period)
         pt.clear()
 
         if period_data:
@@ -266,9 +221,21 @@ class DashboardPane(Container):
         else:
             pt.add_row(t("dash.no_data"), "", "", "", "", "")
 
-    def on_period_selector_changed(self, event: PeriodSelector.Changed) -> None:
-        """Handle period changes from the selector widget."""
-        self.action_period(event.period)
+        pt.move_cursor(row=0, column=0, animate=False, scroll=False)
+        pt.scroll_home(animate=False, immediate=True, x_axis=False, y_axis=True)
+
+    def _get_period_table(self, key: str) -> DataTable:
+        return self.query_one(f"#period-table-{key}", DataTable)
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Handle period changes from the nested tabbed content."""
+        if event.tabbed_content.id != "period-tabs":
+            return
+        tab_id = event.tab.id or ""
+        if tab_id.startswith("period-"):
+            period = tab_id.replace("period-", "", 1)
+            if period != self._period:
+                self.action_period(period)
 
     def action_period(self, key: str) -> None:
         """Switch period via keyboard (1/2/3)."""

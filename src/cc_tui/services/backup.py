@@ -313,7 +313,7 @@ def restore_full_backup(backup_path: str) -> bool:
                 CLAUDE_DIR.rename(temp_dir)
             try:
                 shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=False)
-            except Exception:
+            except (OSError, shutil.Error):
                 # Rollback directory
                 if temp_dir.exists():
                     if CLAUDE_DIR.exists():

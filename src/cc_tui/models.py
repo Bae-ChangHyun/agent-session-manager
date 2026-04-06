@@ -47,6 +47,7 @@ TODOS_DIR = CLAUDE_DIR / "todos"
 PLUGINS_DIR = CLAUDE_DIR / "plugins"
 SKILLS_DIR = CLAUDE_DIR / "skills"
 BACKUP_BASE_DIR = Path.home() / ".cc-tui" / "backups"
+RECOVERY_BASE_DIR = Path.home() / ".cc-tui" / "recovery"
 
 
 @dataclass
@@ -125,6 +126,20 @@ class BackupInfo:
     created: float = 0
     size_bytes: int = 0
     backup_type: str = ""  # config, full, settings, plugins, sessions
+
+
+@dataclass
+class RecoveryInfo:
+    """A recoverable snapshot created before trashing data."""
+
+    id: str
+    name: str
+    category: str
+    original_path: str
+    snapshot_path: str
+    created: float = 0
+    size_bytes: int = 0
+    original_exists: bool = False
 
 
 @dataclass

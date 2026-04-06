@@ -4,7 +4,7 @@ import re
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from cc_tui.models import decode_path_hint, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
@@ -48,6 +48,9 @@ class FileHistoryPane(Container):
     #fh-layout {
         height: 1fr;
     }
+    #fh-filter {
+        margin-bottom: 1;
+    }
     #fh-list-panel {
         width: 1fr;
         height: 1fr;
@@ -73,6 +76,7 @@ class FileHistoryPane(Container):
             t("fh.info"),
             id="fh-info",
         )
+        yield Input(placeholder=t("fh.filter_placeholder"), id="fh-filter")
         with Horizontal(id="fh-layout"):
             with Vertical(id="fh-list-panel"):
                 yield DataTable(id="fh-table")
@@ -94,6 +98,11 @@ class FileHistoryPane(Container):
         self._selected: set[str] = set()
         self._row_display: dict[str, str] = {}
         self._group_items: dict[str, list[str]] = {}
+        self._filter_query = ""
+        self._sort_mode = "project"
+        self._all_entries = []
+        self._encoded_to_path = {}
+        self._session_to_project = {}
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -107,14 +116,42 @@ class FileHistoryPane(Container):
             target_enc = self.app.target_encoded
             entries = [e for e in entries if e.dir_name == target_enc]
         session_to_project = get_session_to_project_map()
-        self.app.call_from_thread(self._update_table, entries, encoded_to_path, session_to_project)
+        self.app.call_from_thread(self._set_entries, entries, encoded_to_path, session_to_project)
 
-    def _update_table(self, entries, encoded_to_path: dict, session_to_project: dict = None) -> None:
+    def _set_entries(self, entries, encoded_to_path: dict, session_to_project: dict = None) -> None:
+        self._all_entries = list(entries)
+        self._encoded_to_path = encoded_to_path
+        self._session_to_project = session_to_project or {}
+        self._render_table()
+
+    def _render_table(self) -> None:
+        entries = list(self._all_entries)
+        query = self._filter_query.casefold()
+        if query:
+            filtered = []
+            for entry in entries:
+                project = self._session_to_project.get(entry.dir_name, "")
+                display = _display_name(entry.dir_name, self._encoded_to_path)
+                haystack = " ".join((entry.dir_name, project, display)).casefold()
+                if query in haystack:
+                    filtered.append(entry)
+            entries = filtered
+
+        if self._sort_mode == "session":
+            entries.sort(key=lambda e: _display_name(e.dir_name, self._encoded_to_path).casefold())
+        elif self._sort_mode == "status":
+            entries.sort(key=lambda e: (not e.is_orphaned, _display_name(e.dir_name, self._encoded_to_path).casefold()))
+        else:
+            entries.sort(
+                key=lambda e: (
+                    self._session_to_project.get(e.dir_name, _display_name(e.dir_name, self._encoded_to_path)).casefold(),
+                    _display_name(e.dir_name, self._encoded_to_path).casefold(),
+                )
+            )
+
         table = self.query_one("#fh-table", DataTable)
         table.clear()
         self._entries = {e.dir_name: e for e in entries}
-        self._encoded_to_path = encoded_to_path
-        self._session_to_project = session_to_project or {}
         self._orphaned_fh_names = [e.dir_name for e in entries if e.is_orphaned]
         self._selected.clear()
         self._row_display = {}
@@ -129,7 +166,7 @@ class FileHistoryPane(Container):
                 orphaned.append(e)
             else:
                 project = self._session_to_project.get(e.dir_name)
-                display = project if project else _display_name(e.dir_name, encoded_to_path)
+                display = project if project else _display_name(e.dir_name, self._encoded_to_path)
                 groups[display].append(e)
 
         if orphaned:
@@ -180,7 +217,15 @@ class FileHistoryPane(Container):
         """Render action bar with clickable buttons."""
         sel = len(self._selected)
         trash_label = t("fh.btn_trash") + (f" ({sel})" if sel else "")
-        actions = [("trash-selected", trash_label, "#e8890c")]
+        sort_labels = {
+            "project": t("fh.sort_project"),
+            "status": t("fh.sort_status"),
+            "session": t("fh.sort_session"),
+        }
+        actions = [
+            ("sort-fh", t("fh.btn_sort", mode=sort_labels[self._sort_mode]), "#555555"),
+            ("trash-selected", trash_label, "#e8890c"),
+        ]
         count = len(getattr(self, "_orphaned_fh_names", []))
         if count > 0:
             actions.append(("trash-orphaned", t("fh.btn_trash_orphaned", count=count), "#ba3c5b"))
@@ -210,7 +255,14 @@ class FileHistoryPane(Container):
 
     def _handle_action(self, action_id: str) -> None:
         """Handle action bar button clicks."""
-        if action_id == "trash-selected":
+        if action_id == "sort-fh":
+            self._sort_mode = {
+                "project": "status",
+                "status": "session",
+                "session": "project",
+            }[self._sort_mode]
+            self._render_table()
+        elif action_id == "trash-selected":
             self._click_trash_selected()
         elif action_id == "trash-orphaned":
             self._click_trash_orphaned()
@@ -288,3 +340,9 @@ class FileHistoryPane(Container):
             self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
             self.app.call_from_thread(self.refresh_data)
         self.run_worker(_work, thread=True)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "fh-filter":
+            return
+        self._filter_query = event.value.strip()
+        self._render_table()

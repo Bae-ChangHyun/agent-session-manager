@@ -408,7 +408,7 @@ class MigratePane(Container):
             self.app.notify(t("mig.same_error"), severity="error")
             return
         if self._session_rows and not self._selected_sessions:
-            self.app.notify("No sessions selected", severity="error")
+            self.app.notify(t("mig.no_sessions_selected"), severity="error")
             return
 
         sel = len(self._selected_sessions)
