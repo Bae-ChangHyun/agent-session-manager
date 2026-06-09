@@ -10,7 +10,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
+from cc_tui.models import CLAUDE_DIR, CODEX_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
 from cc_tui.services.recovery import create_recovery_snapshot
 
 logger = logging.getLogger(__name__)
@@ -296,6 +296,26 @@ def count_empty_files(directory: Path) -> int:
     except (PermissionError, OSError):
         pass
     return count
+
+
+def trash_codex_session(path: str | Path) -> bool:
+    """Move a Codex rollout session file to trash (validated under ~/.codex)."""
+    p = Path(path)
+    if not p.exists():
+        return False
+    try:
+        if p.is_symlink():
+            raise ValueError(f"Refusing to operate on symlink: {p}")
+        resolved = p.resolve()
+        if not resolved.is_relative_to(CODEX_DIR.resolve()):
+            raise ValueError(f"Path outside Codex dir: {p}")
+        create_recovery_snapshot(resolved, "codex-session")
+        _log_trash(resolved, "codex-session")
+        send2trash(str(resolved))
+        return True
+    except (ValueError, PermissionError, OSError) as e:
+        logger.warning("Failed to trash codex session %s: %s", path, e)
+        return False
 
 
 def trash_path(path: str | Path) -> bool:

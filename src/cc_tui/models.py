@@ -52,6 +52,11 @@ SKILLS_DIR = CLAUDE_DIR / "skills"
 BACKUP_BASE_DIR = Path.home() / ".cc-tui" / "backups"
 RECOVERY_BASE_DIR = Path.home() / ".cc-tui" / "recovery"
 
+# --- Codex (OpenAI Codex CLI) data layout ---
+# Sessions are global rollout-*.jsonl files partitioned by date, not per-project.
+CODEX_DIR = Path.home() / ".codex"
+CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
+
 
 @dataclass
 class ProjectInfo:

@@ -9,6 +9,7 @@ from textual.widgets import DataTable, Input, Static
 from cc_tui.i18n import t
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.backup import (
+    create_codex_backup,
     create_config_backup,
     create_full_backup,
     create_plugins_backup,
@@ -139,13 +140,18 @@ class BackupsPane(Container):
     # ── Actions bar ──────────────────────────────────────────
 
     def _render_actions(self) -> None:
-        create_actions = [
-            ("config-backup", t("bak.btn_config"), "#0178d4"),
-            ("settings-backup", t("bak.btn_settings"), "#0178d4"),
-            ("plugins-backup", t("bak.btn_plugins"), "#0178d4"),
-            ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
-            ("full-backup", t("bak.btn_full"), "#0178d4"),
-        ]
+        if getattr(self.app, "is_codex", False):
+            create_actions = [
+                ("codex-backup", t("bak.btn_codex"), "#0178d4"),
+            ]
+        else:
+            create_actions = [
+                ("config-backup", t("bak.btn_config"), "#0178d4"),
+                ("settings-backup", t("bak.btn_settings"), "#0178d4"),
+                ("plugins-backup", t("bak.btn_plugins"), "#0178d4"),
+                ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
+                ("full-backup", t("bak.btn_full"), "#0178d4"),
+            ]
         self.query_one("#backup-create-actions", ActionBar).set_actions(
             create_actions, on_action=self._handle_action
         )
@@ -393,6 +399,13 @@ class BackupsPane(Container):
                 if ok
                 else None,
             )
+        elif action_id == "codex-backup":
+            self.app.push_screen(
+                ConfirmScreen(t("bak.confirm_codex")),
+                callback=lambda ok: self.run_worker(self._do_codex_backup, thread=True)
+                if ok
+                else None,
+            )
         elif action_id == "restore":
             self._click_restore()
         elif action_id == "delete":
@@ -427,6 +440,15 @@ class BackupsPane(Container):
             self.app.call_from_thread(
                 self.app.notify, t("bak.backup_failed"), severity="error"
             )
+        self.app.call_from_thread(self.refresh_data)
+
+    def _do_codex_backup(self) -> None:
+        self.app.call_from_thread(self.app.notify, t("bak.codex_creating"))
+        path = create_codex_backup()
+        if path:
+            self.app.call_from_thread(self.app.notify, t("bak.codex_created", path=path))
+        else:
+            self.app.call_from_thread(self.app.notify, t("bak.no_source"), severity="warning")
         self.app.call_from_thread(self.refresh_data)
 
     def _do_settings_backup(self) -> None:

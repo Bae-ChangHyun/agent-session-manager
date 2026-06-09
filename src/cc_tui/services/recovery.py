@@ -11,7 +11,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import CLAUDE_DIR, RECOVERY_BASE_DIR, RecoveryInfo
+from cc_tui.models import CLAUDE_DIR, CODEX_DIR, RECOVERY_BASE_DIR, RecoveryInfo
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,9 @@ _SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 def _validate_original_path(path: Path) -> Path:
     resolved = path.resolve()
-    if not resolved.is_relative_to(CLAUDE_DIR.resolve()):
-        raise ValueError(f"Recovery path outside Claude data dir: {path}")
+    roots = (CLAUDE_DIR.resolve(), CODEX_DIR.resolve())
+    if not any(resolved.is_relative_to(root) for root in roots):
+        raise ValueError(f"Recovery path outside managed data dirs: {path}")
     return resolved
 
 

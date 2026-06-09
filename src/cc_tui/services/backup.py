@@ -16,6 +16,8 @@ from cc_tui.models import (
     BACKUP_BASE_DIR,
     CLAUDE_DIR,
     CLAUDE_JSON,
+    CODEX_DIR,
+    CODEX_SESSIONS_DIR,
     PLUGINS_DIR,
     PROJECTS_DIR,
     SKILLS_DIR,
@@ -174,6 +176,34 @@ def create_sessions_backup() -> str | None:
         return None
 
 
+def create_codex_backup() -> str | None:
+    """Backup Codex session data (~/.codex/sessions + small index/config files).
+
+    Excludes the large regenerable caches (sqlite logs, generated_images).
+    """
+    if not CODEX_SESSIONS_DIR.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = _ensure_backup_dir() / f"codex-{timestamp}"
+    try:
+        shutil.copytree(
+            str(CODEX_SESSIONS_DIR),
+            str(backup_dir / "sessions"),
+            symlinks=_SYMLINKS_ON,
+            ignore_dangling_symlinks=True,
+        )
+        for name in ("session_index.jsonl", "history.jsonl", "config.toml"):
+            f = CODEX_DIR / name
+            if f.exists():
+                shutil.copy2(str(f), str(backup_dir / name))
+        return str(backup_dir)
+    except OSError as e:
+        logger.warning("Failed to create codex backup: %s", e)
+        if backup_dir.exists():
+            shutil.rmtree(str(backup_dir), ignore_errors=True)
+        return None
+
+
 # ── List backups ─────────────────────────────────────────────────
 
 
@@ -204,6 +234,7 @@ def list_backups() -> list[BackupInfo]:
         "settings-": "settings",
         "plugins-": "plugins",
         "sessions-": "sessions",
+        "codex-": "codex",
     }
     for d in sorted(backup_dir.iterdir(), reverse=True):
         if not d.is_dir():
