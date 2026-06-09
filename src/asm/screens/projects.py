@@ -264,11 +264,13 @@ class ProjectsPane(Container):
                 instr_path=path if Path(path).is_dir() else None,
             )
 
-    def _render_detail_actions(self, show_trash_session=False, show_remove_config=False, instr_path=None) -> None:
+    def _render_detail_actions(self, show_trash_session=False, show_remove_config=False, instr_path=None, show_move=False) -> None:
         """Render detail panel action bar."""
         actions = []
         if show_trash_session:
             actions.append(("trash-session", t("proj.btn_trash_session"), "#e8890c"))
+        if show_move:  # Codex: re-assign session to another working dir
+            actions.append(("move-codex-session", t("proj.btn_move_codex"), "#8B5CF6"))
         # Per-project instruction files (edit existing, "+" to create).
         if instr_path:
             for fname in INSTRUCTION_FILES:
@@ -438,6 +440,7 @@ class ProjectsPane(Container):
             self._render_detail_actions(
                 show_trash_session=True,
                 show_remove_config=False,
+                show_move=(source == "codex"),
             )
             self.run_worker(lambda: self._load_messages(session_id, project_dir, source), thread=True)
         elif kind == "dup_copy":
@@ -487,7 +490,7 @@ class ProjectsPane(Container):
             marks = []
             for fname in INSTRUCTION_FILES:
                 present = (Path(p.path) / fname).exists()
-                marks.append(f"[green]✓[/] {fname}" if present else f"[dim]· {fname}[/]")
+                marks.append(f"[green]✓[/] {fname}" if present else f"[red]✗[/] [dim]{fname}[/]")
             detail += "\n[bold]Instructions:[/]\n  " + "   ".join(marks) + "\n"
 
         # Config 내용 표시
@@ -559,6 +562,20 @@ class ProjectsPane(Container):
         self._handle_action("remove-config")
 
     def _handle_action(self, action_id: str) -> None:
+        if action_id == "move-codex-session":
+            session = getattr(self, "_selected_session", None)
+            if not session or len(session) < 3 or session[2] != "codex":
+                return
+            from asm.screens.input_dialog import InputDialog
+            self.app.push_screen(
+                InputDialog(
+                    t("proj.move_codex_title"),
+                    t("proj.move_codex_label"),
+                    placeholder="/home/you/project",
+                ),
+                callback=self._do_move_codex,
+            )
+            return
         if action_id.startswith("edit::"):
             fname = action_id.split("::", 1)[1]
             path = getattr(self, "_selected_project_path", None)
@@ -606,6 +623,27 @@ class ProjectsPane(Container):
                 ConfirmScreen(t("proj.confirm_trash_orphaned", count=len(names))),
                 callback=lambda ok: self._do_trash_orphaned_sessions() if ok else None,
             )
+
+    def _do_move_codex(self, new_cwd: str | None) -> None:
+        new_cwd = (new_cwd or "").strip()
+        session = getattr(self, "_selected_session", None)
+        if not new_cwd or not session:
+            return
+        rollout_path = session[1]
+
+        def _work():
+            from asm.services import codex_data
+            ok = codex_data.move_session(rollout_path, new_cwd)
+            self.app.call_from_thread(self._on_codex_moved, ok)
+        self.run_worker(_work, thread=True)
+
+    def _on_codex_moved(self, ok: bool) -> None:
+        if ok:
+            self.app.notify(t("proj.move_codex_ok"))
+            self._selected_session = None
+            self.refresh_data()
+        else:
+            self.app.notify(t("common.failed"), severity="error")
 
     def _do_trash_session(self) -> None:
         session = getattr(self, "_selected_session", None)

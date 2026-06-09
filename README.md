@@ -55,6 +55,8 @@ same view filtered to **Claude** and to **Codex**:
 ### Unified sessions (Claude + Codex)
 - One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**
 - Expand a project to preview conversations from either agent; trash individual sessions
+- **Edit instructions:** per project, view/edit/create `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENTS.local.md` in a built-in editor (Ctrl+S to save)
+- **Move a Codex session** to another working directory (rewrites its `cwd`, which is how `codex resume --cd` associates sessions)
 - **Orphan cleanup:** detect and bulk-clean Claude sessions, file-history, debug, and task entries with no matching project
 - **Duplicate sessions:** find the same session copied across projects and delete individual copies
 - **Migration:** copy Claude sessions between projects (originals preserved), with paths auto-rewritten

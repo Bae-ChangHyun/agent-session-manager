@@ -323,6 +323,58 @@ def get_all_period_usage(limit: int = SCAN_LIMIT) -> dict[str, list[dict]]:
     return {p: get_period_usage(p, limit) for p in ("daily", "weekly", "monthly")}
 
 
+def _retarget_cwd(obj, new_cwd: str) -> bool:
+    """Recursively set every ``cwd`` string field in a JSON object to new_cwd."""
+    changed = False
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "cwd" and isinstance(v, str):
+                obj[k] = new_cwd
+                changed = True
+            elif isinstance(v, (dict, list)):
+                changed = _retarget_cwd(v, new_cwd) or changed
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                changed = _retarget_cwd(item, new_cwd) or changed
+    return changed
+
+
+def move_session(rollout_path: str, new_cwd: str) -> bool:
+    """Re-assign a Codex session to a different working directory.
+
+    Codex sessions are global, date-partitioned rollouts whose owning project is
+    recorded as ``cwd`` in the session_meta (Codex resumes by cwd, e.g.
+    ``codex resume --cd <dir>``). "Moving" rewrites that cwd; the file stays in
+    its date folder. A recovery snapshot is taken first. Returns True if changed.
+    """
+    from asm.services.recovery import create_recovery_snapshot
+
+    p = Path(rollout_path)
+    if not p.exists():
+        return False
+    try:
+        create_recovery_snapshot(p, "codex-session")
+        out, changed = [], False
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                out.append(line)
+                continue
+            if _retarget_cwd(obj, new_cwd):
+                changed = True
+            out.append(json.dumps(obj, ensure_ascii=False))
+        if changed:
+            p.write_text("\n".join(out) + "\n")
+            refresh()
+        return changed
+    except OSError:
+        return False
+
+
 def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
     """Per-project cost + model totals + daily session counts for recent sessions."""
     project_costs: dict[str, dict] = {}
