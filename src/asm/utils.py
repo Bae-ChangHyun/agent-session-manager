@@ -1,4 +1,4 @@
-"""Shared utility functions for agentkeep."""
+"""Shared utility functions for asm."""
 
 
 def format_bytes(size: int) -> str:

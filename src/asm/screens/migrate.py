@@ -10,13 +10,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, DirectoryTree, Static, Tree
 
-from agentkeep.models import PROJECTS_DIR, encode_path
-from agentkeep.screens.confirm import ConfirmScreen
-from agentkeep.i18n import t
+from asm.models import PROJECTS_DIR, encode_path
+from asm.screens.confirm import ConfirmScreen
+from asm.i18n import t
 from rich.markup import escape
-from agentkeep.services.claude_data import get_session_messages
-from agentkeep.services.migrate import get_available_projects, migrate_sessions
-from agentkeep.widgets.action_bar import ActionBar
+from asm.services.claude_data import get_session_messages
+from asm.services.migrate import get_available_projects, migrate_sessions
+from asm.widgets.action_bar import ActionBar
 
 
 class MigratePane(Container):

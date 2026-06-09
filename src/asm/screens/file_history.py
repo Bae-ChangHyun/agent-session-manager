@@ -6,12 +6,12 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
-from agentkeep.models import decode_path_hint, encode_path
-from agentkeep.screens.confirm import ConfirmScreen
-from agentkeep.services.claude_data import get_file_history, get_project_paths, get_session_to_project_map
-from agentkeep.i18n import t
-from agentkeep.services.cleaner import trash_file_history, trash_file_histories
-from agentkeep.widgets.action_bar import ActionBar
+from asm.models import decode_path_hint, encode_path
+from asm.screens.confirm import ConfirmScreen
+from asm.services.claude_data import get_file_history, get_project_paths, get_session_to_project_map
+from asm.i18n import t
+from asm.services.cleaner import trash_file_history, trash_file_histories
+from asm.widgets.action_bar import ActionBar
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 

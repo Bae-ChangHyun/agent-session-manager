@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agentkeep.services.backup import (
+from asm.services.backup import (
     SETTINGS_FILES,
     _SYMLINKS_ON,
     _ensure_backup_dir,
@@ -30,7 +30,7 @@ from agentkeep.services.backup import (
     restore_sessions_backup,
     restore_settings_backup,
 )
-from agentkeep.models import BACKUP_BASE_DIR, BackupInfo
+from asm.models import BACKUP_BASE_DIR, BackupInfo
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +75,8 @@ class TestSettingsBackup:
         ]
 
         with (
-            patch("agentkeep.services.backup.SETTINGS_FILES", fake_settings_files),
-            patch("agentkeep.services.backup.BACKUP_BASE_DIR", fake_backup),
+            patch("asm.services.backup.SETTINGS_FILES", fake_settings_files),
+            patch("asm.services.backup.BACKUP_BASE_DIR", fake_backup),
         ):
             path = create_settings_backup()
 
@@ -90,7 +90,7 @@ class TestSettingsBackup:
     def test_no_settings_files(self, tmp_path: Path):
         """Should return None when no settings files exist."""
         fake_files = [tmp_path / "nonexistent.json"]
-        with patch("agentkeep.services.backup.SETTINGS_FILES", fake_files):
+        with patch("asm.services.backup.SETTINGS_FILES", fake_files):
             result = create_settings_backup()
         assert result is None
 
@@ -114,9 +114,9 @@ class TestPluginsBackup:
         fake_backup = tmp_path / "backups"
 
         with (
-            patch("agentkeep.services.backup.PLUGINS_DIR", fake_plugins),
-            patch("agentkeep.services.backup.SKILLS_DIR", fake_skills),
-            patch("agentkeep.services.backup.BACKUP_BASE_DIR", fake_backup),
+            patch("asm.services.backup.PLUGINS_DIR", fake_plugins),
+            patch("asm.services.backup.SKILLS_DIR", fake_skills),
+            patch("asm.services.backup.BACKUP_BASE_DIR", fake_backup),
         ):
             path = create_plugins_backup()
 
@@ -127,8 +127,8 @@ class TestPluginsBackup:
 
     def test_no_plugins_or_skills(self, tmp_path: Path):
         with (
-            patch("agentkeep.services.backup.PLUGINS_DIR", tmp_path / "nope1"),
-            patch("agentkeep.services.backup.SKILLS_DIR", tmp_path / "nope2"),
+            patch("asm.services.backup.PLUGINS_DIR", tmp_path / "nope1"),
+            patch("asm.services.backup.SKILLS_DIR", tmp_path / "nope2"),
         ):
             result = create_plugins_backup()
         assert result is None
@@ -149,8 +149,8 @@ class TestSessionsBackup:
         fake_backup = tmp_path / "backups"
 
         with (
-            patch("agentkeep.services.backup.PROJECTS_DIR", fake_projects),
-            patch("agentkeep.services.backup.BACKUP_BASE_DIR", fake_backup),
+            patch("asm.services.backup.PROJECTS_DIR", fake_projects),
+            patch("asm.services.backup.BACKUP_BASE_DIR", fake_backup),
         ):
             path = create_sessions_backup()
 
@@ -207,7 +207,7 @@ class TestExportImport:
         backup.mkdir(parents=True)
         (backup / "settings.json").write_text('{"test": true}')
 
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = export_backup(str(backup), dest_dir=str(tmp_path / "exports"))
 
         assert result is not None
@@ -225,7 +225,7 @@ class TestExportImport:
             tar.add(str(src_dir), arcname="settings-test")
 
         backup_dir = tmp_path / "backups"
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", backup_dir):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", backup_dir):
             result = import_backup(str(archive))
 
         assert result is not None
@@ -244,7 +244,7 @@ class TestExportImport:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = import_backup(str(archive))
 
         assert result is None
@@ -258,7 +258,7 @@ class TestExportImport:
             info.size = len(data)
             tar.addfile(info, BytesIO(data))
 
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = import_backup(str(archive))
 
         assert result is None
@@ -272,7 +272,7 @@ class TestExportImport:
             info.linkname = "/tmp/evil-target"
             tar.addfile(info)
 
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = import_backup(str(archive))
 
         assert result is None
@@ -318,7 +318,7 @@ class TestListBackups:
         full_dir = tmp_path / "full-2024-01-01_00-00-00"
         full_dir.mkdir()
 
-        with patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path):
+        with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path):
             backups = list_backups()
 
         types = {b.backup_type for b in backups}
@@ -347,9 +347,9 @@ class TestRestoreSettings:
         fake_backup_base = tmp_path / "backups"
 
         with (
-            patch("agentkeep.services.backup.CLAUDE_DIR", fake_claude),
-            patch("agentkeep.services.backup.BACKUP_BASE_DIR", fake_backup_base),
-            patch("agentkeep.services.backup.SETTINGS_FILES", [fake_claude / "settings.json"]),
+            patch("asm.services.backup.CLAUDE_DIR", fake_claude),
+            patch("asm.services.backup.BACKUP_BASE_DIR", fake_backup_base),
+            patch("asm.services.backup.SETTINGS_FILES", [fake_claude / "settings.json"]),
         ):
             ok = restore_settings_backup(str(backup_dir))
 
@@ -379,11 +379,11 @@ class TestRestoreFullBackup:
             return real_replace(src, dst)
 
         with (
-            patch("agentkeep.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"),
-            patch("agentkeep.services.backup.CLAUDE_DIR", fake_claude_dir),
-            patch("agentkeep.services.backup.CLAUDE_JSON", fake_claude_json),
-            patch("agentkeep.services.backup.create_full_backup", return_value=str(tmp_path / "safety")),
-            patch("agentkeep.services.backup.os.replace", side_effect=tracked_replace),
+            patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"),
+            patch("asm.services.backup.CLAUDE_DIR", fake_claude_dir),
+            patch("asm.services.backup.CLAUDE_JSON", fake_claude_json),
+            patch("asm.services.backup.create_full_backup", return_value=str(tmp_path / "safety")),
+            patch("asm.services.backup.os.replace", side_effect=tracked_replace),
         ):
             ok = restore_full_backup(str(backup_dir))
 
@@ -400,16 +400,16 @@ class TestRestoreFullBackup:
 
 class TestCrossPlatform:
     def test_symlinks_off_on_windows(self):
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "win32"
             assert (mock_sys.platform != "win32") is False
 
     def test_symlinks_on_linux(self):
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "linux"
             assert (mock_sys.platform != "win32") is True
 
     def test_symlinks_on_macos(self):
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "darwin"
             assert (mock_sys.platform != "win32") is True

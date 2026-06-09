@@ -6,9 +6,9 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.widgets import DataTable, Input, Static
 
-from agentkeep.i18n import t
-from agentkeep.screens.confirm import ConfirmScreen
-from agentkeep.services.backup import (
+from asm.i18n import t
+from asm.screens.confirm import ConfirmScreen
+from asm.services.backup import (
     create_codex_backup,
     create_config_backup,
     create_full_backup,
@@ -27,13 +27,13 @@ from agentkeep.services.backup import (
     restore_sessions_backup,
     restore_settings_backup,
 )
-from agentkeep.services.recovery import (
+from asm.services.recovery import (
     delete_recovery_item,
     list_recovery_items,
     restore_recovery_item,
 )
-from agentkeep.utils import format_bytes
-from agentkeep.widgets.action_bar import ActionBar
+from asm.utils import format_bytes
+from asm.widgets.action_bar import ActionBar
 
 
 class BackupsPane(Container):
@@ -148,7 +148,7 @@ class BackupsPane(Container):
             ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
             ("full-backup", t("bak.btn_full"), "#0178d4"),
         ]
-        from agentkeep.services import codex_data
+        from asm.services import codex_data
         if codex_data.is_available():
             create_actions.append(("codex-backup", t("bak.btn_codex"), "#10A37F"))
         self.query_one("#backup-create-actions", ActionBar).set_actions(
@@ -679,7 +679,7 @@ class BackupsPane(Container):
             )
 
     def _click_import(self) -> None:
-        from agentkeep.screens.input_dialog import InputDialog
+        from asm.screens.input_dialog import InputDialog
 
         self.app.push_screen(
             InputDialog(

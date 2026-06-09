@@ -1,4 +1,4 @@
-"""Data models for agentkeep."""
+"""Data models for asm."""
 
 from __future__ import annotations
 
@@ -49,11 +49,11 @@ TODOS_DIR = CLAUDE_DIR / "todos"
 TASKS_DIR = CLAUDE_DIR / "tasks"
 PLUGINS_DIR = CLAUDE_DIR / "plugins"
 SKILLS_DIR = CLAUDE_DIR / "skills"
-APP_DATA_DIR = Path.home() / ".agentkeep"  # was ~/.cc-tui before the rename
+APP_DATA_DIR = Path.home() / ".asm"
 BACKUP_BASE_DIR = APP_DATA_DIR / "backups"
 RECOVERY_BASE_DIR = APP_DATA_DIR / "recovery"
-# Legacy data dir kept for one-time migration on startup.
-LEGACY_APP_DATA_DIR = Path.home() / ".cc-tui"
+# Older data dirs kept for one-time migration on startup (newest first).
+LEGACY_APP_DATA_DIRS = [Path.home() / ".agentkeep", Path.home() / ".cc-tui"]
 
 # --- Codex (OpenAI Codex CLI) data layout ---
 # Sessions are global rollout-*.jsonl files partitioned by date, not per-project.
@@ -62,31 +62,31 @@ CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
 
 
 def migrate_legacy_data_dir() -> bool:
-    """One-time migration of the old ~/.cc-tui data dir into ~/.agentkeep.
+    """One-time migration of older data dirs (~/.agentkeep, ~/.cc-tui) into ~/.asm.
 
     Merges each legacy item (backups/, recovery/, trash-log.jsonl) into the new
     dir without clobbering anything already there, so a stray file in the new dir
     doesn't strand the old backups. Returns True if anything was migrated. Safe to
-    call on every startup (no-op once the legacy dir is gone).
+    call on every startup (no-op once the legacy dirs are gone).
     """
     import shutil
 
-    if not LEGACY_APP_DATA_DIR.exists():
-        return False
-    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     moved = False
-    try:
-        for item in LEGACY_APP_DATA_DIR.iterdir():
-            dest = APP_DATA_DIR / item.name
-            if dest.exists():
-                continue  # don't overwrite newer data
-            shutil.move(str(item), str(dest))
-            moved = True
-        # Remove the now-empty (or leftover) legacy dir if nothing remains.
-        if not any(LEGACY_APP_DATA_DIR.iterdir()):
-            LEGACY_APP_DATA_DIR.rmdir()
-    except OSError:
-        return moved
+    for legacy in LEGACY_APP_DATA_DIRS:
+        if not legacy.exists():
+            continue
+        APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            for item in legacy.iterdir():
+                dest = APP_DATA_DIR / item.name
+                if dest.exists():
+                    continue  # don't overwrite newer data
+                shutil.move(str(item), str(dest))
+                moved = True
+            if not any(legacy.iterdir()):
+                legacy.rmdir()
+        except OSError:
+            continue
     return moved
 
 

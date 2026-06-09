@@ -3,10 +3,10 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://cdn.simpleicons.org/anthropic/D97757">
   <source media="(prefers-color-scheme: light)" srcset="https://cdn.simpleicons.org/anthropic/1A1915">
-  <img alt="agentkeep" width="48" height="48">
+  <img alt="asm" width="48" height="48">
 </picture>
 
-# agentkeep
+# agent-session-manager
 
 **Claude Code & Codex 세션·비용·데이터 관리 터미널 UI**
 
@@ -26,7 +26,7 @@
 ## 데모
 
 <div align="center">
-<img src="docs/demo.gif" alt="agentkeep 데모" width="800"/>
+<img src="docs/demo.gif" alt="asm" width="800"/>
 </div>
 
 ---
@@ -35,7 +35,7 @@
 
 **Claude Code**와 **OpenAI Codex**를 많이 쓸수록 `~/.claude`, `~/.codex`에 세션·비용·디버그·스냅샷 파일이 쌓입니다. 어떤 프로젝트가 비용을 얼마나 쓰는지, 어떤 파일이 정리해도 되는지 파악하기 어렵죠.
 
-**agentkeep**은 터미널에서 두 도구를 한 대시보드로 관리합니다 — Claude / Codex **필터**로 합쳐 보거나 따로 볼 수 있습니다.
+**agent-session-manager**은 터미널에서 두 도구를 한 대시보드로 관리합니다 — Claude / Codex **필터**로 합쳐 보거나 따로 볼 수 있습니다.
 
 ---
 
@@ -75,15 +75,15 @@
 
 ```bash
 # pip
-pip install agentkeep
+pip install agent-session-manager
 
 # uv
-uv tool install agentkeep
+uv tool install agent-session-manager
 
 # 소스에서 설치
-git clone https://github.com/Bae-ChangHyun/agentkeep.git
-cd agentkeep
-uv sync && uv run agentkeep
+git clone https://github.com/Bae-ChangHyun/agent-session-manager.git
+cd agent-session-manager
+uv sync && uv run asm
 ```
 
 ---
@@ -91,10 +91,10 @@ uv sync && uv run agentkeep
 ## 사용법
 
 ```bash
-agentkeep                       # 기본 실행 (Claude + Codex 함께 표시)
-agentkeep --source codex        # 대시보드를 Codex 필터로 시작
-agentkeep --path /your/project  # 특정 Claude 프로젝트 필터링
-agentkeep --lang ko             # 한국어 UI
+asm                       # 기본 실행 (Claude + Codex 함께 표시)
+asm --source codex        # 대시보드를 Codex 필터로 시작
+asm --path /your/project  # 특정 Claude 프로젝트 필터링
+asm --lang ko             # 한국어 UI
 ```
 
 두 소스는 항상 한 화면에서 함께 다룹니다 — `--source`는 대시보드 초기 필터만 정하며, 실행 중 `s`로 언제든 바꿀 수 있습니다.
@@ -120,8 +120,8 @@ agentkeep --lang ko             # 한국어 UI
 | `~/.claude.json` · `~/.claude/projects/` | Claude 프로젝트 목록·비용·세션 JSONL |
 | `~/.claude/file-history/` · `~/.claude/debug/` · `~/.claude/tasks/` | 스냅샷·디버그 로그·task 목록 |
 | `~/.codex/sessions/` | Codex rollout 세션 파일 |
-| `~/.agentkeep/backups/` | 백업 (기존 `~/.cc-tui`에서 자동 이전) |
-| `~/.agentkeep/trash-log.jsonl` | 삭제 이력 로그 |
+| `~/.asm/backups/` | 백업 (기존 `~/.cc-tui`에서 자동 이전) |
+| `~/.asm/trash-log.jsonl` | 삭제 이력 로그 |
 
 ---
 

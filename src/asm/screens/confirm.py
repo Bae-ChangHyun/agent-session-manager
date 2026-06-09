@@ -6,7 +6,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from agentkeep.i18n import t
+from asm.i18n import t
 
 
 class ConfirmScreen(ModalScreen[bool]):

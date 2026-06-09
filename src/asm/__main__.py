@@ -1,16 +1,17 @@
-"""Entry point for agentkeep."""
+"""Entry point for asm."""
 
 import argparse
 
-from agentkeep.app import CCTuiApp
-from agentkeep.i18n import init_lang
-from agentkeep.models import migrate_legacy_data_dir
+from asm.app import CCTuiApp
+from asm.i18n import init_lang
+from asm.models import migrate_legacy_data_dir
+from asm.services.update import maybe_prompt_update
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="agentkeep",
-        description="agentkeep: manage Claude Code & Codex sessions, cost and data",
+        prog="asm",
+        description="asm: manage Claude Code & Codex sessions, cost and data",
     )
     parser.add_argument(
         "--path",
@@ -23,7 +24,7 @@ def main():
         type=str,
         default=None,
         choices=["en", "ko"],
-        help="UI language (default: en, or set CC_TUI_LANG env var)",
+        help="UI language (default: en, or set ASM_LANG env var)",
     )
     parser.add_argument(
         "--source",
@@ -33,10 +34,17 @@ def main():
         help="Initial dashboard source filter: all (default), claude, or codex. "
              "Both sources are always shown; toggle in-app with 's'.",
     )
+    parser.add_argument(
+        "--no-update-check",
+        action="store_true",
+        help="Skip the startup check for a newer release.",
+    )
     args = parser.parse_args()
 
     init_lang(args.lang)
     migrate_legacy_data_dir()
+    if not args.no_update_check:
+        maybe_prompt_update()
 
     app = CCTuiApp(target_path=args.path, source=args.source)
     app.run()

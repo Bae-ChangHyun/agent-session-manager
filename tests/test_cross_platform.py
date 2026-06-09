@@ -1,7 +1,7 @@
 """Cross-platform compatibility tests.
 
 Tests Windows/macOS/Linux behavior by monkeypatching sys.platform
-and agentkeep.models.IS_WINDOWS.
+and asm.models.IS_WINDOWS.
 """
 
 from __future__ import annotations
@@ -20,58 +20,58 @@ class TestDecodePathHint:
     """Test path decoding across platforms."""
 
     def test_unix_standard(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", False):
+        with patch("asm.models.IS_WINDOWS", False):
             assert decode_path_hint("-home-bch-Project") == "/home/bch/Project"
 
     def test_unix_empty(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", False):
+        with patch("asm.models.IS_WINDOWS", False):
             assert decode_path_hint("") == "/"
 
     def test_unix_root_only(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", False):
+        with patch("asm.models.IS_WINDOWS", False):
             assert decode_path_hint("-") == "/"
 
     def test_unix_deep_path(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", False):
+        with patch("asm.models.IS_WINDOWS", False):
             assert decode_path_hint("-home-user-a-b-c-d") == "/home/user/a/b/c/d"
 
     def test_windows_drive_letter(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", True):
+        with patch("asm.models.IS_WINDOWS", True):
             assert decode_path_hint("C-Users-bch-Project") == "C:/Users/bch/Project"
 
     def test_windows_drive_letter_lowercase(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", True):
+        with patch("asm.models.IS_WINDOWS", True):
             assert decode_path_hint("c-Users-bch") == "C:/Users/bch"
 
     def test_windows_drive_only(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", True):
+        with patch("asm.models.IS_WINDOWS", True):
             assert decode_path_hint("C") == "C:/"
 
     def test_windows_no_drive_letter(self):
         """Multi-char first part → not a drive letter, treat as Unix-style."""
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", True):
+        with patch("asm.models.IS_WINDOWS", True):
             assert decode_path_hint("home-bch") == "/home/bch"
 
     def test_windows_empty(self):
-        from agentkeep.models import decode_path_hint
+        from asm.models import decode_path_hint
 
-        with patch("agentkeep.models.IS_WINDOWS", True):
+        with patch("asm.models.IS_WINDOWS", True):
             assert decode_path_hint("") == "/"
 
 
@@ -81,17 +81,17 @@ class TestDecodePathHint:
 
 class TestEncodePath:
     def test_unix_path(self):
-        from agentkeep.models import encode_path
+        from asm.models import encode_path
 
         assert encode_path("/home/bch/Project") == "-home-bch-Project"
 
     def test_windows_path(self):
-        from agentkeep.models import encode_path
+        from asm.models import encode_path
 
         assert encode_path("C:\\Users\\bch\\Project") == "C--Users-bch-Project"
 
     def test_special_chars(self):
-        from agentkeep.models import encode_path
+        from asm.models import encode_path
 
         assert encode_path("/home/user/my_project") == "-home-user-my-project"
 
@@ -106,9 +106,9 @@ class TestDirSize:
         (tmp_path / "a.txt").write_text("hello")
         (tmp_path / "b.txt").write_text("world")
 
-        with patch("agentkeep.services.claude_data.sys") as mock_sys:
+        with patch("asm.services.claude_data.sys") as mock_sys:
             mock_sys.platform = "win32"
-            from agentkeep.services.claude_data import _dir_size
+            from asm.services.claude_data import _dir_size
 
             size = _dir_size(tmp_path)
             assert size == 10  # 5 + 5
@@ -117,7 +117,7 @@ class TestDirSize:
         """On Linux, du is attempted (may succeed or fall back)."""
         (tmp_path / "a.txt").write_text("hello")
 
-        from agentkeep.services.claude_data import _dir_size
+        from asm.services.claude_data import _dir_size
 
         size = _dir_size(tmp_path)
         assert size >= 5  # du or fallback both return >= 5
@@ -160,22 +160,22 @@ class TestPurePathParts:
 
 class TestBackupSymlinks:
     def test_windows_no_symlinks(self):
-        import agentkeep.services.backup  # noqa: F401
+        import asm.services.backup  # noqa: F401
 
         # On Windows, symlinks=False
         assert ("win32" != "win32") == False  # noqa: E712
         # Verify the logic: sys.platform != "win32" → False on Windows
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "win32"
             assert (mock_sys.platform != "win32") is False
 
     def test_unix_symlinks(self):
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "linux"
             assert (mock_sys.platform != "win32") is True
 
     def test_mac_symlinks(self):
-        with patch("agentkeep.services.backup.sys") as mock_sys:
+        with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "darwin"
             assert (mock_sys.platform != "win32") is True
 
@@ -187,6 +187,6 @@ class TestBackupSymlinks:
 class TestMigrateDecoding:
     def test_uses_decode_path_hint(self):
         """Verify migrate.py imports decode_path_hint from models."""
-        from agentkeep.services import migrate
+        from asm.services import migrate
 
         assert hasattr(migrate, "decode_path_hint")

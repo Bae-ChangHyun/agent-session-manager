@@ -12,7 +12,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from agentkeep.models import (
+from asm.models import (
     BACKUP_BASE_DIR,
     CLAUDE_DIR,
     CLAUDE_JSON,

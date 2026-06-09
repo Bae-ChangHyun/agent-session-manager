@@ -3,10 +3,10 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://cdn.simpleicons.org/anthropic/D97757">
   <source media="(prefers-color-scheme: light)" srcset="https://cdn.simpleicons.org/anthropic/1A1915">
-  <img alt="agentkeep" width="48" height="48">
+  <img alt="asm" width="48" height="48">
 </picture>
 
-# agentkeep
+# agent-session-manager
 
 **Manage your Claude Code & Codex sessions, cost, and data — all in your terminal**
 
@@ -26,7 +26,7 @@ Combined cost dashboard · Session cleanup · Migration · Backup/Restore
 ## Demo
 
 <div align="center">
-<img src="docs/demo.gif" alt="agentkeep demo" width="800"/>
+<img src="docs/demo.gif" alt="asm" width="800"/>
 </div>
 
 ---
@@ -35,7 +35,7 @@ Combined cost dashboard · Session cleanup · Migration · Backup/Restore
 
 The more you use **Claude Code** and **OpenAI Codex**, the more files pile up in `~/.claude` and `~/.codex` — session data, cost logs, debug files, snapshots. It gets hard to track which projects cost how much, or which files are orphaned and safe to clean up.
 
-**agentkeep** gives you one visual dashboard in your terminal to manage both — with a Claude / Codex filter so you can see them combined or separately.
+**agent-session-manager** gives you one visual dashboard in your terminal to manage both — with a Claude / Codex filter so you can see them combined or separately.
 
 ---
 
@@ -78,15 +78,15 @@ The more you use **Claude Code** and **OpenAI Codex**, the more files pile up in
 
 ```bash
 # pip
-pip install agentkeep
+pip install agent-session-manager
 
 # uv
-uv tool install agentkeep
+uv tool install agent-session-manager
 
 # From source
-git clone https://github.com/Bae-ChangHyun/agentkeep.git
-cd agentkeep
-uv sync && uv run agentkeep
+git clone https://github.com/Bae-ChangHyun/agent-session-manager.git
+cd agent-session-manager
+uv sync && uv run asm
 ```
 
 ---
@@ -94,10 +94,10 @@ uv sync && uv run agentkeep
 ## Usage
 
 ```bash
-agentkeep                       # Launch (shows Claude + Codex together)
-agentkeep --source codex        # Start with the dashboard filtered to Codex
-agentkeep --path /your/project  # Filter to a specific Claude project
-agentkeep --lang ko             # Korean UI
+asm                       # Launch (shows Claude + Codex together)
+asm --source codex        # Start with the dashboard filtered to Codex
+asm --path /your/project  # Filter to a specific Claude project
+asm --lang ko             # Korean UI
 ```
 
 Both sources are always available in one session — the `--source` flag only sets
@@ -124,8 +124,8 @@ the dashboard's initial filter, which you can change anytime with `s`.
 | `~/.claude.json` · `~/.claude/projects/` | Claude project list, costs, session JSONL |
 | `~/.claude/file-history/` · `~/.claude/debug/` · `~/.claude/tasks/` | Snapshots, debug logs, task lists |
 | `~/.codex/sessions/` | Codex rollout session files |
-| `~/.agentkeep/backups/` | Backups (migrated automatically from the old `~/.cc-tui`) |
-| `~/.agentkeep/trash-log.jsonl` | Deletion audit log |
+| `~/.asm/backups/` | Backups (migrated automatically from the old `~/.cc-tui`) |
+| `~/.asm/trash-log.jsonl` | Deletion audit log |
 
 ---
 

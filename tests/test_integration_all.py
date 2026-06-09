@@ -10,10 +10,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from agentkeep.app import CCTuiApp
-from agentkeep.services import backup as backup_service
-from agentkeep.services import claude_data, cleaner, codex_data, recovery
-from agentkeep import models
+from asm.app import CCTuiApp
+from asm.services import backup as backup_service
+from asm.services import claude_data, cleaner, codex_data, recovery
+from asm import models
 
 from tests.test_feature_smoke import _fake_send2trash, _setup_fake_claude
 
@@ -136,7 +136,7 @@ def _setup_fake_codex(monkeypatch, tmp_path) -> dict:
     monkeypatch.setattr(backup_service, "BACKUP_BASE_DIR", backups_dir)
     monkeypatch.setattr(cleaner, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(cleaner, "send2trash", _fake_send2trash)
-    monkeypatch.setattr(cleaner, "_TRASH_LOG", tmp_path / ".agentkeep" / "trash-log.jsonl")
+    monkeypatch.setattr(cleaner, "_TRASH_LOG", tmp_path / ".asm" / "trash-log.jsonl")
     monkeypatch.setattr(recovery, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(recovery, "RECOVERY_BASE_DIR", tmp_path / ".cc-tui" / "recovery")
     return {"codex_dir": codex_dir, "sessions_dir": codex_dir / "sessions", "backups_dir": backups_dir}

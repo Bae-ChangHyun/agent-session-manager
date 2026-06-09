@@ -1,4 +1,4 @@
-"""Internationalization support for agentkeep."""
+"""Internationalization support for asm."""
 
 from __future__ import annotations
 
@@ -324,11 +324,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "bak.info": {
         "en": (
             "[bold]Backups[/] - Create, restore, and export/import backups\n"
-            "[dim]Stored in ~/.agentkeep/backups/. SPACE=multi-select, Export as .tar.gz for server migration.[/]"
+            "[dim]Stored in ~/.asm/backups/. SPACE=multi-select, Export as .tar.gz for server migration.[/]"
         ),
         "ko": (
             "[bold]Backups[/] - 백업 생성, 복원, 내보내기/가져오기\n"
-            "[dim]~/.agentkeep/backups/ 에 저장됩니다. SPACE=다중 선택, 서버 이동 시 .tar.gz로 내보내기/가져오기 가능.[/]"
+            "[dim]~/.asm/backups/ 에 저장됩니다. SPACE=다중 선택, 서버 이동 시 .tar.gz로 내보내기/가져오기 가능.[/]"
         ),
     },
     "bak.btn_config": {"en": "Config", "ko": "Config"},
@@ -463,5 +463,5 @@ def t(key: str, **kwargs) -> str:
 
 def init_lang(cli_lang: str | None = None) -> None:
     """Initialize language from CLI arg > env var > default (en)."""
-    lang = cli_lang or os.environ.get("CC_TUI_LANG", "en")
+    lang = cli_lang or os.environ.get("ASM_LANG", "en")
     set_lang(lang)

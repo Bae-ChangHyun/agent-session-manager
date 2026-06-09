@@ -6,20 +6,20 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from agentkeep.i18n import t
-from agentkeep.screens.backups import BackupsPane
-from agentkeep.screens.codex_sessions import CodexSessionsPane
-from agentkeep.screens.dashboard import DashboardPane
-from agentkeep.screens.debug_todos import DebugTodosPane
-from agentkeep.screens.file_history import FileHistoryPane
-from agentkeep.screens.migrate import MigratePane
-from agentkeep.screens.projects import ProjectsPane
+from asm.i18n import t
+from asm.screens.backups import BackupsPane
+from asm.screens.codex_sessions import CodexSessionsPane
+from asm.screens.dashboard import DashboardPane
+from asm.screens.debug_todos import DebugTodosPane
+from asm.screens.file_history import FileHistoryPane
+from asm.screens.migrate import MigratePane
+from asm.screens.projects import ProjectsPane
 
 
 class CCTuiApp(App):
-    """agentkeep — Claude Code & Codex session/data manager TUI."""
+    """asm — Claude Code & Codex session/data manager TUI."""
 
-    TITLE = "agentkeep"
+    TITLE = "asm"
     SUB_TITLE = "Claude Code & Codex session manager"
 
     CSS = """
@@ -65,7 +65,7 @@ class CCTuiApp(App):
     def target_encoded(self) -> str | None:
         """Encoded project dir name for the target path."""
         if self.target_path:
-            from agentkeep.models import encode_path
+            from asm.models import encode_path
             return encode_path(self.target_path)
         return None
 
@@ -95,7 +95,7 @@ class CCTuiApp(App):
 
     @staticmethod
     def _codex_available() -> bool:
-        from agentkeep.services import codex_data
+        from asm.services import codex_data
         return codex_data.is_available()
 
     def action_tab(self, tab_id: str) -> None:
@@ -125,7 +125,7 @@ class CCTuiApp(App):
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""
-        from agentkeep.services import codex_data
+        from asm.services import codex_data
         codex_data.refresh()
         for pane in self.query(
             "DashboardPane, ProjectsPane, CodexSessionsPane, FileHistoryPane, "

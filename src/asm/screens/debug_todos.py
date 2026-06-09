@@ -6,11 +6,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
-from agentkeep.models import DEBUG_DIR
-from agentkeep.screens.confirm import ConfirmScreen
-from agentkeep.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
-from agentkeep.i18n import t
-from agentkeep.services.cleaner import (
+from asm.models import DEBUG_DIR
+from asm.screens.confirm import ConfirmScreen
+from asm.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
+from asm.i18n import t
+from asm.services.cleaner import (
     count_empty_files,
     count_empty_todos,
     prune_empty_debug_files,
@@ -20,8 +20,8 @@ from agentkeep.services.cleaner import (
     trash_todo_file,
     trash_todo_files,
 )
-from agentkeep.utils import format_bytes
-from agentkeep.widgets.action_bar import ActionBar
+from asm.utils import format_bytes
+from asm.widgets.action_bar import ActionBar
 
 
 class DebugTodosPane(Container):

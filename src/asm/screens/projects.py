@@ -11,10 +11,10 @@ from textual.widgets import Input, Static, Tree
 
 from rich.markup import escape
 
-from agentkeep.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
-from agentkeep.screens.confirm import ConfirmScreen
-from agentkeep.services.backup import create_config_backup
-from agentkeep.services.claude_data import (
+from asm.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
+from asm.screens.confirm import ConfirmScreen
+from asm.services.backup import create_config_backup
+from asm.services.claude_data import (
     find_duplicate_sessions,
     get_project_sessions,
     get_projects,
@@ -23,10 +23,10 @@ from agentkeep.services.claude_data import (
     load_claude_json,
     remove_project_from_json,
 )
-from agentkeep.i18n import t
-from agentkeep.services.cleaner import trash_sessions, trash_single_session_file
-from agentkeep.utils import format_bytes
-from agentkeep.widgets.action_bar import ActionBar
+from asm.i18n import t
+from asm.services.cleaner import trash_sessions, trash_single_session_file
+from asm.utils import format_bytes
+from asm.widgets.action_bar import ActionBar
 
 
 class ProjectsPane(Container):

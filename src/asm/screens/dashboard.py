@@ -7,8 +7,8 @@ from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.widgets import DataTable, Static, TabPane, TabbedContent
 
-from agentkeep.i18n import t
-from agentkeep.utils import format_bytes
+from asm.i18n import t
+from asm.utils import format_bytes
 
 
 def _fmt_tokens(n: int) -> str:
@@ -136,7 +136,7 @@ class DashboardPane(Container):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="dash-scroll"):
-            yield Static(f"[bold]agentkeep[/]  {t('dash.loading')}", id="dash-loading")
+            yield Static(f"[bold]asm[/]  {t('dash.loading')}", id="dash-loading")
             yield Static("", id="dash-header")
             yield Static("", id="dash-div-1")
             yield Static("", id="dash-cost-title", classes="dash-title")
@@ -172,7 +172,7 @@ class DashboardPane(Container):
         self.run_worker(self._load, thread=True)
 
     def _source_modules(self) -> dict:
-        from agentkeep.services import claude_data, codex_data
+        from asm.services import claude_data, codex_data
         mods = {"claude": claude_data}
         if codex_data.is_available():
             mods["codex"] = codex_data
@@ -289,11 +289,11 @@ class DashboardPane(Container):
     def _source_filter_line(self) -> str:
         """Header line with the active source filter highlighted."""
         if not self._has_codex():
-            return "[bold]agentkeep[/]  Claude Code Session Manager  [dim](Codex: none)[/]"
+            return "[bold]asm[/]  Claude Code Session Manager  [dim](Codex: none)[/]"
         def chip(key, label):
             return f"[reverse] {label} [/]" if self._source == key else f"[dim] {label} [/]"
         return (
-            "[bold]agentkeep[/]   "
+            "[bold]asm[/]   "
             f"{chip('all', 'All')}{chip('claude', 'Claude')}{chip('codex', 'Codex')}"
             "   [dim]press [b]s[/] to filter[/]"
         )
