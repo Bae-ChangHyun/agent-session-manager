@@ -186,16 +186,18 @@ class DashboardPane(Container):
         mods = self._source_modules()
         stats = {s: m.get_stats() for s, m in mods.items()}
         usage = {s: m.get_usage_data() for s, m in mods.items()}
-        daily = {s: m.get_period_usage("daily") for s, m in mods.items()}
-        self.app.call_from_thread(self._on_data_loaded, stats, usage, daily)
-        for key in ("weekly", "monthly"):
-            data = {s: m.get_period_usage(key) for s, m in mods.items()}
-            self.app.call_from_thread(self._on_bg_period_loaded, key, data)
+        # One scan per source yields all three periods (daily/weekly/monthly).
+        by_source = {s: m.get_all_period_usage() for s, m in mods.items()}
+        periods = {
+            p: {s: by_source[s].get(p, []) for s in by_source}
+            for p in ("daily", "weekly", "monthly")
+        }
+        self.app.call_from_thread(self._on_data_loaded, stats, usage, periods)
 
-    def _on_data_loaded(self, stats: dict, usage: dict, daily: dict) -> None:
+    def _on_data_loaded(self, stats: dict, usage: dict, periods: dict) -> None:
         self._raw_stats = stats
         self._raw_usage = usage
-        self._raw_periods["daily"] = daily
+        self._raw_periods = periods
         self._loaded = True
         self.query_one("#dash-loading", Static).display = False
         for wid in self.CONTENT_IDS:
@@ -297,16 +299,30 @@ class DashboardPane(Container):
         self.query_one("#dash-overview", Static).update(self._overview_text())
 
     def _source_filter_line(self) -> str:
-        """Header line with the active source filter highlighted."""
+        """Header line with the active source filter as clickable chips."""
         if not self._has_codex():
             return "[bold]asm[/]  Claude Code Session Manager  [dim](Codex: none)[/]"
+
         def chip(key, label):
-            return f"[reverse] {label} [/]" if self._source == key else f"[dim] {label} [/]"
+            style = "reverse" if self._source == key else "dim"
+            # Clickable (Textual @click markup) and keyboard-toggleable with 's'.
+            return f"[@click=app.dash_set_source('{key}')][{style}] {label} [/][/]"
+
         return (
             "[bold]asm[/]   "
             f"{chip('all', 'All')}{chip('claude', 'Claude')}{chip('codex', 'Codex')}"
-            "   [dim]press [b]s[/] to filter[/]"
+            "   [dim]click or press [b]s[/][/]"
         )
+
+    def set_source(self, name: str) -> None:
+        """Set the dashboard source filter directly (from a click or key)."""
+        if name not in ("all", "claude", "codex"):
+            return
+        if not self._has_codex() and name != "claude":
+            return
+        if self._source != name and self._loaded:
+            self._source = name
+            self._render_all()
 
     def _overview_text(self) -> str:
         claude = self._raw_stats.get("claude")

@@ -318,6 +318,11 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
     return result
 
 
+def get_all_period_usage(limit: int = SCAN_LIMIT) -> dict[str, list[dict]]:
+    """All three period groupings (the underlying session scan is cached)."""
+    return {p: get_period_usage(p, limit) for p in ("daily", "weekly", "monthly")}
+
+
 def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
     """Per-project cost + model totals + daily session counts for recent sessions."""
     project_costs: dict[str, dict] = {}

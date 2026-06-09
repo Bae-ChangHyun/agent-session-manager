@@ -222,34 +222,22 @@ class TestUIBothModes:
 
         asyncio.run(run())
 
-    def test_codex_app_all_tabs(self, monkeypatch, tmp_path):
+    def test_codex_merged_into_projects_tab(self, monkeypatch, tmp_path):
         _setup_fake_codex(monkeypatch, tmp_path)
 
         async def run():
-            app = CCTuiApp()  # both sources shown together
+            app = CCTuiApp()
             async with app.run_test(size=(140, 45)) as pilot:
-                await pilot.pause(); await asyncio.sleep(0.4); await pilot.pause()
-                from textual.widgets import TabbedContent, Tree
-                tabs = app.query_one("#main-tabs", TabbedContent)
-                ids = {tp.id for tp in tabs.query("TabPane")}
-                # Both Claude management tabs and the Codex tab are present.
-                assert "tab-codex-sessions" in ids
+                await pilot.pause(); await asyncio.sleep(0.8); await pilot.pause()
+                from textual.widgets import TabbedContent
+                ids = {tp.id for tp in app.query_one("#main-tabs", TabbedContent).query("TabPane")}
+                # Codex now lives inside the unified Projects tab, not its own tab.
+                assert "tab-codex-sessions" not in ids
                 assert "tab-projects" in ids
-                assert "tab-dashboard" in ids
 
-                app.action_tab("tab-codex-sessions")
-                await pilot.pause(); await asyncio.sleep(0.6); await pilot.pause()
-                tree = app.query_one("#codex-tree", Tree)
-                projects = [c for c in tree.root.children if c.data and c.data[0] == "project"]
-                assert len(projects) == 2
-                projects[0].expand()
-                await pilot.pause(); await asyncio.sleep(0.6); await pilot.pause()
-                sessions = [c for c in projects[0].children if c.data and c.data[0] == "session"]
-                assert len(sessions) >= 1
-
-                app.action_tab("tab-backups")
-                await pilot.pause(); await asyncio.sleep(0.3); await pilot.pause()
-                app.action_refresh()
-                await pilot.pause()
+                pane = app.query_one("ProjectsPane")
+                assert "/work/proj-a" in pane._codex_paths
+                paths = {p.path for p in pane._all_projects}
+                assert {"/work/proj-a", "/work/proj-b"} <= paths
 
         asyncio.run(run())
