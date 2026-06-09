@@ -231,6 +231,19 @@ class TestCodexFeatures:
         assert backup_service.restore_codex_backup(path) is True
         assert (env["sessions_dir"] / "2026" / "06" / "01" / "rollout-a.jsonl").exists()
 
+    def test_codex_restore_rolls_back_on_failure(self, monkeypatch, tmp_path):
+        env = _setup_fake_codex(monkeypatch, tmp_path)
+        path = backup_service.create_codex_backup()
+        assert path is not None
+
+        # Force the copy to fail mid-restore; the live sessions must survive.
+        def _boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(backup_service.shutil, "copytree", _boom)
+        assert backup_service.restore_codex_backup(path) is False
+        assert (env["sessions_dir"] / "2026" / "06" / "01" / "rollout-a.jsonl").exists()
+
 
 # --------------------------------------------------------------------------- #
 # UI drive — every tab in both modes

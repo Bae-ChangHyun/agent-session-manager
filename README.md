@@ -66,7 +66,7 @@ same view filtered to **Claude** and to **Codex**:
 ### Safe by default
 - Every delete goes to the **OS trash** and is recorded in an audit log
 - **Recovery snapshots** are taken before trashing (Claude and Codex), with a size/age cap so they don't pile up
-- Backups for Claude (config / settings / plugins / sessions / full) and Codex (sessions, excluding huge caches); restore is rollback-safe, and credential-bearing backups are written owner-only (0600)
+- Backups **and restore** for Claude (config / settings / plugins / sessions / full) and Codex (sessions, excluding huge caches); restore is rollback-safe (the live dir is moved aside and put back if the copy fails), and credential-bearing backups are written owner-only (0600)
 
 ---
 
@@ -154,7 +154,6 @@ When a newer release is on PyPI, `asm` offers a `y/N` upgrade prompt on startup 
 
 ## 🗺️ Roadmap
 
-- [ ] Codex session **restore** (backup / list / delete exist today; restore does not)
 - [ ] Per-source disk-usage in the data overview
 - [ ] Incremental (mtime-based) usage scan for very large `~/.claude` trees
 - [ ] ruff + mypy in CI
