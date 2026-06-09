@@ -512,13 +512,8 @@ def restore_codex_backup(backup_path: str) -> bool:
         # Safety: back up current Codex sessions first.
         create_codex_backup()
 
-        if CODEX_SESSIONS_DIR.exists():
-            shutil.rmtree(str(CODEX_SESSIONS_DIR))
-        shutil.copytree(
-            str(sessions_src), str(CODEX_SESSIONS_DIR),
-            symlinks=_SYMLINKS_ON,
-            ignore_dangling_symlinks=True,
-        )
+        # Rollback-safe: live dir is moved aside and restored if the copy fails.
+        _replace_dir_with_rollback(sessions_src, CODEX_SESSIONS_DIR)
         for name in ("session_index.jsonl", "history.jsonl", "config.toml"):
             f = src / name
             if f.exists():
