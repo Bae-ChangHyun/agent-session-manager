@@ -75,7 +75,7 @@ def create_config_backup() -> str | None:
         return None
     backup_dir = _ensure_backup_dir() / "config"
     backup_dir.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     dest = backup_dir / f".claude-{timestamp}.json"
     try:
         shutil.copy2(str(CLAUDE_JSON), str(dest))
@@ -87,7 +87,7 @@ def create_config_backup() -> str | None:
 
 def create_full_backup() -> str | None:
     """Create a full backup of .claude directory and .claude.json."""
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     backup_dir = _ensure_backup_dir() / f"full-{timestamp}"
 
     try:
@@ -111,7 +111,7 @@ def create_settings_backup() -> str | None:
     existing = [f for f in SETTINGS_FILES if f.exists()]
     if not existing:
         return None
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     backup_dir = _ensure_backup_dir() / f"settings-{timestamp}"
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +129,7 @@ def create_plugins_backup() -> str | None:
     """Backup plugins/ and skills/ directories (including symlinks)."""
     if not PLUGINS_DIR.exists() and not SKILLS_DIR.exists():
         return None
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     backup_dir = _ensure_backup_dir() / f"plugins-{timestamp}"
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +159,7 @@ def create_sessions_backup() -> str | None:
     """Backup projects/ directory (session data)."""
     if not PROJECTS_DIR.exists():
         return None
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     backup_dir = _ensure_backup_dir() / f"sessions-{timestamp}"
     try:
         shutil.copytree(
@@ -183,7 +183,7 @@ def create_codex_backup() -> str | None:
     """
     if not CODEX_SESSIONS_DIR.exists():
         return None
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     backup_dir = _ensure_backup_dir() / f"codex-{timestamp}"
     try:
         shutil.copytree(
@@ -299,8 +299,12 @@ def restore_config_backup(backup_path: str) -> bool:
         return False
     try:
         _validate_backup_path(src)
+        # Read the backup up front: the safety backup below can land on the same
+        # timestamped filename as ``src`` (second resolution) and overwrite it
+        # with the current — possibly broken — config before we copy it back.
+        payload = src.read_bytes()
         create_config_backup()
-        shutil.copy2(str(src), str(CLAUDE_JSON))
+        CLAUDE_JSON.write_bytes(payload)
         return True
     except (OSError, ValueError) as e:
         logger.warning("Failed to restore config backup: %s", e)
