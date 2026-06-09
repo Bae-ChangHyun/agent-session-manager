@@ -36,6 +36,20 @@ class TestClaudeExtraFeatures:
         # Trash just the copy in project B.
         assert cleaner.trash_single_session_file(env["encoded_b"], dup) is True
 
+    def test_find_empty_sessions(self, monkeypatch, tmp_path):
+        import json as _json
+        env = _setup_fake_claude(monkeypatch, tmp_path)
+        d = env["projects_dir"] / env["encoded_a"]
+        # a stub session (title only, no conversation)
+        (d / "stub00000-0000-0000-0000-000000000000.jsonl").write_text(
+            _json.dumps({"type": "ai-title", "aiTitle": "stub task"}) + "\n"
+        )
+        empties = claude_data.find_empty_sessions()
+        ids = {e["session_id"] for e in empties}
+        assert "stub00000-0000-0000-0000-000000000000" in ids
+        # the real session (env session_id, has user+assistant) is NOT flagged
+        assert env["session_id"] not in ids
+
     def test_metadata_only_session_preview(self, monkeypatch, tmp_path):
         import json as _json
         env = _setup_fake_claude(monkeypatch, tmp_path)

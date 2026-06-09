@@ -884,6 +884,59 @@ def find_duplicate_sessions() -> dict[str, list[str]]:
     return {sid: dirs for sid, dirs in id_to_dirs.items() if len(dirs) > 1}
 
 
+def _session_has_conversation(jsonl: Path) -> bool:
+    """True if a session file has any user/assistant message with content."""
+    try:
+        with open(jsonl) as f:
+            for line in f:
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("type") in ("user", "assistant"):
+                    if _extract_text_content(msg.get("message", {})):
+                        return True
+    except OSError:
+        return True  # err on the safe side — don't flag as empty
+    return False
+
+
+def find_empty_sessions(size_cap: int = 16384) -> list[dict]:
+    """Find 'stub' session files that have no actual conversation.
+
+    These are sessions with only an ai-title / pr-link / metadata and no
+    user/assistant turns (they can't be resumed). Only files up to ``size_cap``
+    bytes are inspected — a real conversation is far larger, so this bounds the
+    scan; emptiness itself is confirmed by parsing.
+    Returns ``[{session_id, project_dir, path, title}]``.
+    """
+    result: list[dict] = []
+    if not PROJECTS_DIR.exists():
+        return result
+    try:
+        for d in PROJECTS_DIR.iterdir():
+            if not d.is_dir():
+                continue
+            for jsonl in d.glob("*.jsonl"):
+                try:
+                    if jsonl.stat().st_size > size_cap:
+                        continue
+                except OSError:
+                    continue
+                if _session_has_conversation(jsonl):
+                    continue
+                _, title = _scan_jsonl_summary(jsonl)
+                result.append({
+                    "session_id": jsonl.stem,
+                    "project_dir": d.name,
+                    "path": str(jsonl),
+                    "title": title,
+                })
+    except (PermissionError, OSError):
+        pass
+    return result
+
+
 def remove_project_from_json(project_path: str) -> bool:
     """Remove a project entry from .claude.json (atomic write)."""
     import tempfile
