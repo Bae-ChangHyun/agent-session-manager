@@ -1,4 +1,4 @@
-"""Data models for CC-TUI."""
+"""Data models for agentkeep."""
 
 from __future__ import annotations
 
@@ -49,13 +49,45 @@ TODOS_DIR = CLAUDE_DIR / "todos"
 TASKS_DIR = CLAUDE_DIR / "tasks"
 PLUGINS_DIR = CLAUDE_DIR / "plugins"
 SKILLS_DIR = CLAUDE_DIR / "skills"
-BACKUP_BASE_DIR = Path.home() / ".cc-tui" / "backups"
-RECOVERY_BASE_DIR = Path.home() / ".cc-tui" / "recovery"
+APP_DATA_DIR = Path.home() / ".agentkeep"  # was ~/.cc-tui before the rename
+BACKUP_BASE_DIR = APP_DATA_DIR / "backups"
+RECOVERY_BASE_DIR = APP_DATA_DIR / "recovery"
+# Legacy data dir kept for one-time migration on startup.
+LEGACY_APP_DATA_DIR = Path.home() / ".cc-tui"
 
 # --- Codex (OpenAI Codex CLI) data layout ---
 # Sessions are global rollout-*.jsonl files partitioned by date, not per-project.
 CODEX_DIR = Path.home() / ".codex"
 CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
+
+
+def migrate_legacy_data_dir() -> bool:
+    """One-time migration of the old ~/.cc-tui data dir into ~/.agentkeep.
+
+    Merges each legacy item (backups/, recovery/, trash-log.jsonl) into the new
+    dir without clobbering anything already there, so a stray file in the new dir
+    doesn't strand the old backups. Returns True if anything was migrated. Safe to
+    call on every startup (no-op once the legacy dir is gone).
+    """
+    import shutil
+
+    if not LEGACY_APP_DATA_DIR.exists():
+        return False
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    moved = False
+    try:
+        for item in LEGACY_APP_DATA_DIR.iterdir():
+            dest = APP_DATA_DIR / item.name
+            if dest.exists():
+                continue  # don't overwrite newer data
+            shutil.move(str(item), str(dest))
+            moved = True
+        # Remove the now-empty (or leftover) legacy dir if nothing remains.
+        if not any(LEGACY_APP_DATA_DIR.iterdir()):
+            LEGACY_APP_DATA_DIR.rmdir()
+    except OSError:
+        return moved
+    return moved
 
 
 @dataclass

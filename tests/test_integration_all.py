@@ -10,10 +10,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from cc_tui.app import CCTuiApp
-from cc_tui.services import backup as backup_service
-from cc_tui.services import claude_data, cleaner, codex_data, recovery
-from cc_tui import models
+from agentkeep.app import CCTuiApp
+from agentkeep.services import backup as backup_service
+from agentkeep.services import claude_data, cleaner, codex_data, recovery
+from agentkeep import models
 
 from tests.test_feature_smoke import _fake_send2trash, _setup_fake_claude
 
@@ -125,11 +125,18 @@ def _setup_fake_codex(monkeypatch, tmp_path) -> dict:
 
     codex_data.refresh()
     monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", codex_dir / "sessions")
+    # Isolate the Claude side (the combined app loads both) to an empty dir.
+    empty_claude = tmp_path / ".claude-empty"
+    (empty_claude / "projects").mkdir(parents=True)
+    monkeypatch.setattr(claude_data, "PROJECTS_DIR", empty_claude / "projects")
+    monkeypatch.setattr(claude_data, "CLAUDE_DIR", empty_claude)
+    monkeypatch.setattr(claude_data, "CLAUDE_JSON", empty_claude / ".claude.json")
     monkeypatch.setattr(backup_service, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(backup_service, "CODEX_SESSIONS_DIR", codex_dir / "sessions")
     monkeypatch.setattr(backup_service, "BACKUP_BASE_DIR", backups_dir)
     monkeypatch.setattr(cleaner, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(cleaner, "send2trash", _fake_send2trash)
+    monkeypatch.setattr(cleaner, "_TRASH_LOG", tmp_path / ".agentkeep" / "trash-log.jsonl")
     monkeypatch.setattr(recovery, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(recovery, "RECOVERY_BASE_DIR", tmp_path / ".cc-tui" / "recovery")
     return {"codex_dir": codex_dir, "sessions_dir": codex_dir / "sessions", "backups_dir": backups_dir}
@@ -219,15 +226,16 @@ class TestUIBothModes:
         _setup_fake_codex(monkeypatch, tmp_path)
 
         async def run():
-            app = CCTuiApp(source="codex")
+            app = CCTuiApp()  # both sources shown together
             async with app.run_test(size=(140, 45)) as pilot:
                 await pilot.pause(); await asyncio.sleep(0.4); await pilot.pause()
                 from textual.widgets import TabbedContent, Tree
                 tabs = app.query_one("#main-tabs", TabbedContent)
                 ids = {tp.id for tp in tabs.query("TabPane")}
+                # Both Claude management tabs and the Codex tab are present.
                 assert "tab-codex-sessions" in ids
-                assert "tab-projects" not in ids  # Claude-only tab hidden
-                assert "tab-migrate" not in ids
+                assert "tab-projects" in ids
+                assert "tab-dashboard" in ids
 
                 app.action_tab("tab-codex-sessions")
                 await pilot.pause(); await asyncio.sleep(0.6); await pilot.pause()

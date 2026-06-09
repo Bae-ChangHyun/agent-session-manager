@@ -1,13 +1,17 @@
-"""Entry point for cc-tui."""
+"""Entry point for agentkeep."""
 
 import argparse
 
-from cc_tui.app import CCTuiApp
-from cc_tui.i18n import init_lang
+from agentkeep.app import CCTuiApp
+from agentkeep.i18n import init_lang
+from agentkeep.models import migrate_legacy_data_dir
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CC-TUI: Claude Code Session Manager")
+    parser = argparse.ArgumentParser(
+        prog="agentkeep",
+        description="agentkeep: manage Claude Code & Codex sessions, cost and data",
+    )
     parser.add_argument(
         "--path",
         type=str,
@@ -24,13 +28,15 @@ def main():
     parser.add_argument(
         "--source",
         type=str,
-        default="claude",
-        choices=["claude", "codex"],
-        help="Data source: 'claude' (~/.claude) or 'codex' (~/.codex). Default: claude",
+        default="all",
+        choices=["all", "claude", "codex"],
+        help="Initial dashboard source filter: all (default), claude, or codex. "
+             "Both sources are always shown; toggle in-app with 's'.",
     )
     args = parser.parse_args()
 
     init_lang(args.lang)
+    migrate_legacy_data_dir()
 
     app = CCTuiApp(target_path=args.path, source=args.source)
     app.run()

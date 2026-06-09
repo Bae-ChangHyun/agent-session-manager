@@ -16,13 +16,13 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from cc_tui.models import (
+from agentkeep.models import (
     CODEX_SESSIONS_DIR,
     ProjectInfo,
     SessionDetail,
     Stats,
 )
-from cc_tui.services import pricing
+from agentkeep.services import pricing
 
 logger = logging.getLogger(__name__)
 

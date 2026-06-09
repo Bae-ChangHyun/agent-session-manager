@@ -6,11 +6,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
-from cc_tui.models import DEBUG_DIR
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
-from cc_tui.i18n import t
-from cc_tui.services.cleaner import (
+from agentkeep.models import DEBUG_DIR
+from agentkeep.screens.confirm import ConfirmScreen
+from agentkeep.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
+from agentkeep.i18n import t
+from agentkeep.services.cleaner import (
     count_empty_files,
     count_empty_todos,
     prune_empty_debug_files,
@@ -20,8 +20,8 @@ from cc_tui.services.cleaner import (
     trash_todo_file,
     trash_todo_files,
 )
-from cc_tui.utils import format_bytes
-from cc_tui.widgets.action_bar import ActionBar
+from agentkeep.utils import format_bytes
+from agentkeep.widgets.action_bar import ActionBar
 
 
 class DebugTodosPane(Container):

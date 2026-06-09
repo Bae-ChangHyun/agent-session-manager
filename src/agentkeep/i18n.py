@@ -1,4 +1,4 @@
-"""Internationalization support for cc-tui."""
+"""Internationalization support for agentkeep."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.orphaned": {"en": "Orphaned", "ko": "고아 데이터"},
     "tab.debug_todos": {"en": "Debug/Todos", "ko": "디버그/Todos"},
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
-    "tab.sessions": {"en": "Sessions", "ko": "세션"},
+    "tab.codex_sessions": {"en": "Codex Sessions", "ko": "Codex 세션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
     # Codex sessions
     "codex.info": {
@@ -324,11 +324,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "bak.info": {
         "en": (
             "[bold]Backups[/] - Create, restore, and export/import backups\n"
-            "[dim]Stored in ~/.cc-tui/backups/. SPACE=multi-select, Export as .tar.gz for server migration.[/]"
+            "[dim]Stored in ~/.agentkeep/backups/. SPACE=multi-select, Export as .tar.gz for server migration.[/]"
         ),
         "ko": (
             "[bold]Backups[/] - 백업 생성, 복원, 내보내기/가져오기\n"
-            "[dim]~/.cc-tui/backups/ 에 저장됩니다. SPACE=다중 선택, 서버 이동 시 .tar.gz로 내보내기/가져오기 가능.[/]"
+            "[dim]~/.agentkeep/backups/ 에 저장됩니다. SPACE=다중 선택, 서버 이동 시 .tar.gz로 내보내기/가져오기 가능.[/]"
         ),
     },
     "bak.btn_config": {"en": "Config", "ko": "Config"},

@@ -6,21 +6,21 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from cc_tui.i18n import t
-from cc_tui.screens.backups import BackupsPane
-from cc_tui.screens.codex_sessions import CodexSessionsPane
-from cc_tui.screens.dashboard import DashboardPane
-from cc_tui.screens.debug_todos import DebugTodosPane
-from cc_tui.screens.file_history import FileHistoryPane
-from cc_tui.screens.migrate import MigratePane
-from cc_tui.screens.projects import ProjectsPane
+from agentkeep.i18n import t
+from agentkeep.screens.backups import BackupsPane
+from agentkeep.screens.codex_sessions import CodexSessionsPane
+from agentkeep.screens.dashboard import DashboardPane
+from agentkeep.screens.debug_todos import DebugTodosPane
+from agentkeep.screens.file_history import FileHistoryPane
+from agentkeep.screens.migrate import MigratePane
+from agentkeep.screens.projects import ProjectsPane
 
 
 class CCTuiApp(App):
-    """Claude Code Session Manager TUI."""
+    """agentkeep — Claude Code & Codex session/data manager TUI."""
 
-    TITLE = "CC-TUI"
-    SUB_TITLE = "Claude Code Session Manager"
+    TITLE = "agentkeep"
+    SUB_TITLE = "Claude Code & Codex session manager"
 
     CSS = """
     Screen {
@@ -51,52 +51,52 @@ class CCTuiApp(App):
         Binding("f6", "tab('tab-backups')", "Backups"),
     ]
 
-    def __init__(self, target_path: str | None = None, source: str = "claude", **kwargs):
+    def __init__(self, target_path: str | None = None, source: str = "all", **kwargs):
         super().__init__(**kwargs)
         if target_path:
             self.target_path = str(Path(target_path).resolve())
         else:
             self.target_path = None
+        # Initial dashboard source filter (all | claude | codex). Both sources
+        # are always loaded; this only sets the dashboard's starting view.
         self.source = source
-
-    @property
-    def is_codex(self) -> bool:
-        return self.source == "codex"
 
     @property
     def target_encoded(self) -> str | None:
         """Encoded project dir name for the target path."""
         if self.target_path:
-            from cc_tui.models import encode_path
+            from agentkeep.models import encode_path
             return encode_path(self.target_path)
         return None
 
     def compose(self) -> ComposeResult:
-        if self.is_codex:
-            self.SUB_TITLE = "Codex Session Manager"
         if self.target_path:
             self.sub_title = f"Project: {self.target_path}"
         yield Header()
         with TabbedContent(id="main-tabs"):
             with TabPane(t("tab.dashboard"), id="tab-dashboard"):
                 yield DashboardPane()
-            if self.is_codex:
-                # Codex sessions are global rollouts; File History / Debug /
-                # Todos / Migrate have no Codex equivalent and are omitted.
-                with TabPane(t("tab.sessions"), id="tab-codex-sessions"):
+            # Claude-specific management tabs (operate on ~/.claude).
+            with TabPane(t("tab.projects"), id="tab-projects"):
+                yield ProjectsPane()
+            with TabPane(t("tab.file_history"), id="tab-file-history"):
+                yield FileHistoryPane()
+            with TabPane(t("tab.debug_todos"), id="tab-debug-todos"):
+                yield DebugTodosPane()
+            with TabPane(t("tab.migrate"), id="tab-migrate"):
+                yield MigratePane()
+            # Codex sessions (operate on ~/.codex); only shown when present.
+            if self._codex_available():
+                with TabPane(t("tab.codex_sessions"), id="tab-codex-sessions"):
                     yield CodexSessionsPane()
-            else:
-                with TabPane(t("tab.projects"), id="tab-projects"):
-                    yield ProjectsPane()
-                with TabPane(t("tab.file_history"), id="tab-file-history"):
-                    yield FileHistoryPane()
-                with TabPane(t("tab.debug_todos"), id="tab-debug-todos"):
-                    yield DebugTodosPane()
-                with TabPane(t("tab.migrate"), id="tab-migrate"):
-                    yield MigratePane()
             with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
         yield Footer()
+
+    @staticmethod
+    def _codex_available() -> bool:
+        from agentkeep.services import codex_data
+        return codex_data.is_available()
 
     def action_tab(self, tab_id: str) -> None:
         """Switch to a specific tab by ID (ignored if the tab isn't present)."""
@@ -125,9 +125,8 @@ class CCTuiApp(App):
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""
-        if self.is_codex:
-            from cc_tui.services import codex_data
-            codex_data.refresh()
+        from agentkeep.services import codex_data
+        codex_data.refresh()
         for pane in self.query(
             "DashboardPane, ProjectsPane, CodexSessionsPane, FileHistoryPane, "
             "DebugTodosPane, MigratePane, BackupsPane"

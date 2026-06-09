@@ -10,13 +10,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, DirectoryTree, Static, Tree
 
-from cc_tui.models import PROJECTS_DIR, encode_path
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.i18n import t
+from agentkeep.models import PROJECTS_DIR, encode_path
+from agentkeep.screens.confirm import ConfirmScreen
+from agentkeep.i18n import t
 from rich.markup import escape
-from cc_tui.services.claude_data import get_session_messages
-from cc_tui.services.migrate import get_available_projects, migrate_sessions
-from cc_tui.widgets.action_bar import ActionBar
+from agentkeep.services.claude_data import get_session_messages
+from agentkeep.services.migrate import get_available_projects, migrate_sessions
+from agentkeep.widgets.action_bar import ActionBar
 
 
 class MigratePane(Container):

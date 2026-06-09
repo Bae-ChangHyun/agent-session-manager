@@ -5,7 +5,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
-from cc_tui.i18n import t
+from agentkeep.i18n import t
 
 
 class InputDialog(ModalScreen[str | None]):

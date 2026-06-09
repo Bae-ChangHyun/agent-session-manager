@@ -3,6 +3,31 @@ revision = 2
 requires-python = ">=3.11"
 
 [[package]]
+name = "agentkeep"
+version = "0.6.0"
+source = { editable = "." }
+dependencies = [
+    { name = "claude-agent-sdk" },
+    { name = "send2trash" },
+    { name = "textual" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "claude-agent-sdk", specifier = ">=0.1.40" },
+    { name = "send2trash", specifier = ">=1.8.0" },
+    { name = "textual", specifier = ">=1.0.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -32,31 +57,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload_time = "2025-10-06T13:54:43.17Z" },
 ]
-
-[[package]]
-name = "cc-session-utils"
-version = "0.6.0"
-source = { editable = "." }
-dependencies = [
-    { name = "claude-agent-sdk" },
-    { name = "send2trash" },
-    { name = "textual" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "claude-agent-sdk", specifier = ">=0.1.40" },
-    { name = "send2trash", specifier = ">=1.8.0" },
-    { name = "textual", specifier = ">=1.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "certifi"
