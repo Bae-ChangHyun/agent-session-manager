@@ -20,6 +20,7 @@ INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.local.
 from asm.services.backup import create_config_backup
 from asm.services.claude_data import (
     find_duplicate_sessions,
+    find_empty_sessions,
     get_project_sessions,
     get_projects,
     get_session_messages,
@@ -116,6 +117,7 @@ class ProjectsPane(Container):
         self._all_orphaned_sessions = []
         self._all_duplicates: dict[str, list[str]] = {}
         self._codex_paths: set[str] = set()
+        self._empty_sessions: list[dict] = []
         self._filter_query = ""
         self._sort_mode = "path"
 
@@ -142,20 +144,23 @@ class ProjectsPane(Container):
                 codex_paths.add(cp.path)
                 if cp.path not in claude_paths:
                     projects.append(cp)
+        empty_sessions = find_empty_sessions()
         if self.app.target_path:
             projects = [p for p in projects if p.path == self.app.target_path]
             orphaned_sessions = []
             duplicates = {}
             codex_paths = {p for p in codex_paths if p == self.app.target_path}
+            empty_sessions = []
         self.app.call_from_thread(
-            self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths
+            self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths, empty_sessions
         )
 
-    def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None) -> None:
+    def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None, empty_sessions=None) -> None:
         self._all_projects = projects
         self._all_orphaned_sessions = orphaned_sessions or []
         self._all_duplicates = duplicates or {}
         self._codex_paths = codex_paths or set()
+        self._empty_sessions = empty_sessions or []
         self._build_tree_from_state()
 
     def _build_tree_from_state(self) -> None:
@@ -250,6 +255,9 @@ class ProjectsPane(Container):
         count = len(self._orphaned_session_dirs)
         if count > 0:
             actions.append(("trash-orphaned-sessions", t("proj.btn_trash_orphaned", count=count), "#ba3c5b"))
+        empty = len(getattr(self, "_empty_sessions", []))
+        if empty > 0:
+            actions.append(("trash-empty-sessions", t("proj.btn_trash_empty", count=empty), "#ba3c5b"))
         bar.set_actions(actions, on_action=self._handle_action)
 
     def _refresh_detail_actions(self) -> None:
@@ -625,6 +633,29 @@ class ProjectsPane(Container):
                 ConfirmScreen(t("proj.confirm_trash_orphaned", count=len(names))),
                 callback=lambda ok: self._do_trash_orphaned_sessions() if ok else None,
             )
+        elif action_id == "trash-empty-sessions":
+            empties = getattr(self, "_empty_sessions", [])
+            if not empties:
+                self.app.notify(t("common.no_items"))
+                return
+            self.app.push_screen(
+                ConfirmScreen(t("proj.confirm_trash_empty", count=len(empties))),
+                callback=lambda ok: self._do_trash_empty_sessions() if ok else None,
+            )
+
+    def _do_trash_empty_sessions(self) -> None:
+        empties = list(getattr(self, "_empty_sessions", []))
+
+        def _work():
+            ok = fail = 0
+            for e in empties:
+                if trash_single_session_file(e["project_dir"], e["session_id"]):
+                    ok += 1
+                else:
+                    fail += 1
+            self.app.call_from_thread(self.app.notify, t("common.trash_bulk_ok", ok=ok, fail=fail))
+            self.app.call_from_thread(self.refresh_data)
+        self.run_worker(_work, thread=True)
 
     def _do_move_codex(self, new_cwd: str | None) -> None:
         new_cwd = (new_cwd or "").strip()

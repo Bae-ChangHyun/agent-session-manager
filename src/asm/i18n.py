@@ -114,6 +114,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",
         "ko": "Orphaned 세션 디렉토리를 모두 삭제?\n\n매칭 프로젝트 없는 {count}개.\n[dim]휴지통으로 이동, 복구 가능[/]",
     },
+    "proj.btn_trash_empty": {"en": "Clean Empty Sessions ({count})", "ko": "빈 세션 정리 ({count})"},
+    "proj.confirm_trash_empty": {
+        "en": "Trash {count} empty session(s)?\n\nThese have only a title / metadata and no conversation (cannot be resumed).\n[dim]Moved to trash, recoverable[/]",
+        "ko": "빈 세션 {count}개를 삭제할까요?\n\n제목/메타만 있고 대화가 없는(resume 불가) 세션입니다.\n[dim]휴지통으로 이동, 복구 가능[/]",
+    },
     "proj.btn_move_codex": {"en": "Move [m]", "ko": "이동 [m]"},
     "proj.move_codex_title": {"en": "Move Codex session", "ko": "Codex 세션 이동"},
     "proj.move_codex_label": {
