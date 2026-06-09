@@ -339,22 +339,42 @@ def _get_messages_via_jsonl(session_id: str, project_dir: str | None, limit: int
         return []
 
     messages = []
+    ai_title = ""
+    meta_lines: list[str] = []
     try:
         with open(jsonl_path) as f:
             for line in f:
                 try:
                     msg = json.loads(line)
-                    msg_type = msg.get("type")
-                    if msg_type in ("user", "assistant"):
-                        content = _extract_text_content(msg.get("message", {}))
-                        if content:
-                            messages.append({"type": msg_type, "content": content})
                 except json.JSONDecodeError:
                     continue
+                msg_type = msg.get("type")
+                if msg_type in ("user", "assistant"):
+                    content = _extract_text_content(msg.get("message", {}))
+                    if content:
+                        messages.append({"type": msg_type, "content": content})
+                elif msg_type == "ai-title":
+                    ai_title = msg.get("aiTitle", "") or ai_title
+                elif msg_type == "pr-link":
+                    url = msg.get("url") or msg.get("prLink") or ""
+                    if url:
+                        meta_lines.append(f"PR: {url}")
     except OSError:
         pass
 
-    return messages[-limit:] if len(messages) > limit else messages
+    if messages:
+        return messages[-limit:] if len(messages) > limit else messages
+
+    # No conversation turns — surface whatever metadata exists so the preview is
+    # informative instead of blank (these are title/PR/automation-only sessions).
+    if ai_title or meta_lines:
+        info = "[no conversation — metadata only]"
+        if ai_title:
+            info += f"\n\nTitle: {ai_title}"
+        if meta_lines:
+            info += "\n" + "\n".join(meta_lines)
+        return [{"type": "meta", "content": info}]
+    return []
 
 
 def _extract_text_content(message: dict | str) -> str:

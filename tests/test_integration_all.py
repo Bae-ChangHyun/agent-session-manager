@@ -36,6 +36,20 @@ class TestClaudeExtraFeatures:
         # Trash just the copy in project B.
         assert cleaner.trash_single_session_file(env["encoded_b"], dup) is True
 
+    def test_metadata_only_session_preview(self, monkeypatch, tmp_path):
+        import json as _json
+        env = _setup_fake_claude(monkeypatch, tmp_path)
+        d = env["projects_dir"] / env["encoded_a"]
+        sid = "meta0nly-0000-0000-0000-000000000000"
+        (d / f"{sid}.jsonl").write_text(
+            _json.dumps({"type": "ai-title", "aiTitle": "just a title"}) + "\n"
+            + _json.dumps({"type": "pr-link", "url": "https://x/pr/1"}) + "\n"
+        )
+        msgs = claude_data.get_session_messages(sid, project_dir=env["encoded_a"], limit=10)
+        assert len(msgs) == 1 and msgs[0]["type"] == "meta"
+        assert "just a title" in msgs[0]["content"]
+        assert "https://x/pr/1" in msgs[0]["content"]
+
     def test_remove_project_from_json(self, monkeypatch, tmp_path):
         env = _setup_fake_claude(monkeypatch, tmp_path)
         assert claude_data.remove_project_from_json(env["project_b"]) is True
