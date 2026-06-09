@@ -7,14 +7,14 @@ import json
 import shutil
 from pathlib import Path
 
-from cc_tui.app import CCTuiApp
-from cc_tui import models
-from cc_tui.screens import debug_todos as debug_todos_screen
-from cc_tui.screens import file_history as file_history_screen
-from cc_tui.screens import migrate as migrate_screen
-from cc_tui.screens import projects as projects_screen
-from cc_tui.services import backup as backup_service
-from cc_tui.services import claude_data, cleaner, migrate
+from asm.app import CCTuiApp
+from asm import models
+from asm.screens import debug_todos as debug_todos_screen
+from asm.screens import file_history as file_history_screen
+from asm.screens import migrate as migrate_screen
+from asm.screens import projects as projects_screen
+from asm.services import backup as backup_service
+from asm.services import claude_data, cleaner, migrate
 
 def _fake_send2trash(path: str) -> None:
     target = Path(path)
@@ -181,12 +181,17 @@ def _setup_fake_claude(monkeypatch, tmp_path: Path) -> dict[str, Path | str]:
     monkeypatch.setattr(claude_data, "DEBUG_DIR", debug_dir)
     monkeypatch.setattr(claude_data, "TODOS_DIR", todos_dir)
     monkeypatch.setattr(claude_data, "TASKS_DIR", tasks_dir)
+    # Keep Claude-only tests isolated from any real ~/.codex on this machine.
+    from asm.services import codex_data
+    codex_data.refresh()
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", claude_dir / "no-codex")
     monkeypatch.setattr(cleaner, "SESSION_ENV_DIR", session_env_dir)
     monkeypatch.setattr(cleaner, "FILE_HISTORY_DIR", file_history_dir)
     monkeypatch.setattr(cleaner, "DEBUG_DIR", debug_dir)
     monkeypatch.setattr(cleaner, "TODOS_DIR", todos_dir)
     monkeypatch.setattr(cleaner, "TASKS_DIR", tasks_dir)
     monkeypatch.setattr(cleaner, "_ALLOWED_ROOTS", (claude_dir,))
+    monkeypatch.setattr(cleaner, "_TRASH_LOG", home / ".asm" / "trash-log.jsonl")
     monkeypatch.setattr(backup_service, "PLUGINS_DIR", plugins_dir)
     monkeypatch.setattr(backup_service, "SKILLS_DIR", skills_dir)
     monkeypatch.setattr(backup_service, "BACKUP_BASE_DIR", backups_dir)

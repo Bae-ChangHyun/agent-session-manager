@@ -10,8 +10,8 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import CLAUDE_DIR, CODEX_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
-from cc_tui.services.recovery import create_recovery_snapshot
+from asm.models import CLAUDE_DIR, CODEX_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
+from asm.services.recovery import create_recovery_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _validate_path(path: Path) -> Path:
 
 # --- Trash logging (recovery mechanism) ---
 
-_TRASH_LOG = Path.home() / ".cc-tui" / "trash-log.jsonl"
+_TRASH_LOG = Path.home() / ".asm" / "trash-log.jsonl"
 _log_lock = threading.Lock()
 
 

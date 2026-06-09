@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from cc_tui.services.claude_data import get_session_messages, get_session_to_project_map
+from asm.services.claude_data import get_session_messages, get_session_to_project_map
 
 
 class TestSessionMessages:
@@ -24,7 +24,7 @@ class TestSessionMessages:
             '{"type":"user","message":{"content":"right project"}}\n'
         )
 
-        with patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir):
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
             messages = get_session_messages(session_id, project_dir="proj-right", limit=10)
 
         assert messages == [{"type": "user", "content": "right project"}]
@@ -40,8 +40,8 @@ class TestSessionProjectMap:
         fake_paths = {"/tmp/demo-app", "/tmp/demo_app"}
 
         with (
-            patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir),
-            patch("cc_tui.services.claude_data.get_project_paths", return_value=fake_paths),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch("asm.services.claude_data.get_project_paths", return_value=fake_paths),
         ):
             mapping = get_session_to_project_map()
 
@@ -56,23 +56,23 @@ class TestProjectSessionResolution:
     def test_resolve_project_dir_stays_under_projects_dir(self, tmp_path: Path):
         # An absolute project path must resolve to its ENCODED dir under
         # PROJECTS_DIR, not collapse to the real (session-less) source folder.
-        from cc_tui.services.claude_data import _resolve_project_dir
-        from cc_tui.models import encode_path
+        from asm.services.claude_data import _resolve_project_dir
+        from asm.models import encode_path
 
         projects_dir = tmp_path / "projects"
         abs_path = "/work/my-proj"
         encoded = projects_dir / encode_path(abs_path)
         encoded.mkdir(parents=True)
 
-        with patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir):
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
             resolved = _resolve_project_dir(abs_path)
 
         assert resolved is not None
         assert resolved.parent == projects_dir
 
     def test_get_project_sessions_uses_index_and_jsonl(self, tmp_path: Path):
-        from cc_tui.services.claude_data import get_project_sessions
-        from cc_tui.models import encode_path
+        from asm.services.claude_data import get_project_sessions
+        from asm.models import encode_path
         import json
 
         projects_dir = tmp_path / "projects"
@@ -86,7 +86,7 @@ class TestProjectSessionResolution:
             "entries": [{"sessionId": sid, "summary": "indexed summary", "gitBranch": "main"}],
         }))
 
-        with patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir):
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
             sessions = get_project_sessions(abs_path)
 
         assert len(sessions) == 1
@@ -95,7 +95,7 @@ class TestProjectSessionResolution:
         assert sessions[0].file_size > 0
 
     def test_get_todos_reads_tasks_dir(self, tmp_path: Path):
-        from cc_tui.services.claude_data import get_todos
+        from asm.services.claude_data import get_todos
 
         projects_dir = tmp_path / "projects"
         tasks_dir = tmp_path / "tasks"
@@ -108,8 +108,8 @@ class TestProjectSessionResolution:
         (tasks_dir / "orphan-session" / "1.json").write_text('{"subject":"x","status":"pending"}')
 
         with (
-            patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir),
-            patch("cc_tui.services.claude_data.TASKS_DIR", tasks_dir),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch("asm.services.claude_data.TASKS_DIR", tasks_dir),
         ):
             todos = get_todos()
 
@@ -118,7 +118,7 @@ class TestProjectSessionResolution:
         assert names["orphan-session"].is_orphaned
 
     def test_find_duplicate_sessions(self, tmp_path: Path):
-        from cc_tui.services.claude_data import find_duplicate_sessions
+        from asm.services.claude_data import find_duplicate_sessions
 
         projects_dir = tmp_path / "projects"
         a = projects_dir / "proj-a"
@@ -129,7 +129,7 @@ class TestProjectSessionResolution:
         (b / "dup.jsonl").write_text("{}\n")
         (a / "unique.jsonl").write_text("{}\n")
 
-        with patch("cc_tui.services.claude_data.PROJECTS_DIR", projects_dir):
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
             dups = find_duplicate_sessions()
 
         assert set(dups.keys()) == {"dup"}
@@ -138,7 +138,7 @@ class TestProjectSessionResolution:
 
 class TestPricing:
     def test_new_opus_models_use_cheap_tier(self):
-        from cc_tui.services.pricing import calc_cost, is_billable
+        from asm.services.pricing import calc_cost, is_billable
 
         usage = {"input_tokens": 1_000_000}
         # opus 4.5+ -> $5/M input; legacy opus 4.1 -> $15/M

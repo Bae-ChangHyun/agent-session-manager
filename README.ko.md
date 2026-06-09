@@ -1,152 +1,177 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://cdn.simpleicons.org/anthropic/D97757">
-  <source media="(prefers-color-scheme: light)" srcset="https://cdn.simpleicons.org/anthropic/1A1915">
-  <img alt="Claude" width="48" height="48">
-</picture>
+# agent-session-manager
 
-# cc-session-utils
+**Claude Code와 Codex가 남기는 모든 것을, 터미널 대시보드 하나로.**
+`~/.claude`와 `~/.codex`의 비용·세션을 한 화면에서 보고, Claude / Codex 필터로 정리합니다.
 
-**Claude Code 세션 관리 터미널 UI**
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Built with Textual](https://img.shields.io/badge/Built%20with-Textual-5A2CA0?style=flat-square)](https://github.com/Textualize/textual)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-orange?style=flat-square)](#)
+[![Status](https://img.shields.io/badge/Status-Personal--use-lightgrey?style=flat-square)](#)
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-D97757?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Textual](https://img.shields.io/badge/Textual-TUI-D97757?style=for-the-badge)](https://github.com/Textualize/textual)
-[![License](https://img.shields.io/badge/License-MIT-D97757?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Linux%20%7C%20macOS%20%7C%20Windows-1A1915?style=for-the-badge)](#)
-
-사용량 통계 · 세션 정리 · 마이그레이션 · 백업/복원 — 터미널에서 한눈에
-
-**[English](README.md)**
+`asm` · **[English](README.md)**
 
 </div>
+
+---
+
+> **⚠️ 먼저 알아두세요**
+> 이 도구는 **Claude Code와 OpenAI Codex의 내부 데이터**(`~/.claude`, `~/.codex`)를 직접 읽고 수정합니다. 모든 삭제는 OS 휴지통으로 가고 로그에 남지만, 대량 작업 전에는 백업을 권장합니다. Anthropic·OpenAI와 무관한 개인 프로젝트입니다.
+
+---
+
+## 무엇인가요
+
+**Claude Code**와 **Codex**를 쓰다 보면 `~/.claude`, `~/.codex`에 세션 기록·비용 로그·디버그·task 목록·스냅샷이 쌓입니다. 몇 주만 지나면 어떤 프로젝트가 토큰을 가장 많이 썼는지, 어떤 파일이 정리해도 되는지 알기 어렵죠.
+
+**agent-session-manager**(`asm`)는 이 모든 걸 터미널 대시보드 하나에 모읍니다. 두 에이전트를 함께 보여주고, 키 하나(`s`)로 **All / Claude / Codex** 필터를 전환해 비용을 비교하거나 한쪽만 들여다볼 수 있습니다.
+
+### 💡 왜 만들었나요
+
+- **문제:** 서로 다른 두 코딩 에이전트의 비용·세션 데이터가 각각 불투명한 디렉토리에 흩어져, 함께 보는 화면이 없음
+- **해결:** 둘 다 읽어 정확히 가격을 매기고, 휴지통·복구 스냅샷으로 안전하게 정리하는 TUI 하나
 
 ---
 
 ## 데모
 
-<div align="center">
-<img src="docs/demo.gif" alt="cc-session-utils 데모" width="800"/>
-</div>
+통합 대시보드(두 에이전트 합산 비용, 소스 태그된 행) → 같은 화면을 **Claude** / **Codex**로 필터링:
+
+<img src="docs/demo.gif" alt="asm 데모" width="820"/>
 
 ---
 
-## 왜 만들었나요?
+## ✨ 주요 기능
 
-Claude Code를 많이 사용할수록 `~/.claude` 디렉토리에 파일이 쌓이고, 어떤 프로젝트가 얼마나 비용을 쓰는지, 어떤 파일이 정리되지 않고 남아있는지 파악하기 어렵습니다.
+### 통합 대시보드
+- **두 에이전트 합산 비용** + 인앱 소스 필터 — `s`로 All / Claude / Codex 전환
+- 모델별 토큰·비용 (Opus / Sonnet / Haiku / GPT-5.x), 각 행을 소스 태그로 구분
+- 일별 / 주별 / 월별 사용량 표, 프로젝트 비용 Top 10 차트
+- LiteLLM 기반 단가 테이블로 정확한 최신 가격 (신규 Opus/GPT 모델도 옛 단가가 아닌 현재 단가로 계산)
 
-**cc-session-utils**는 터미널을 벗어나지 않고 대시보드로 사용량을 파악하고, 불필요한 orphaned 데이터를 안전하게 정리할 수 있습니다.
+### Claude 관리
+- **프로젝트:** `.claude.json` 트리, 세션 대화 미리보기, 세션 삭제, 설정에서 프로젝트 제거
+- **고아 정리:** 매칭 프로젝트가 없는 세션·파일히스토리·디버그·task 항목을 감지·일괄 정리
+- **중복 세션:** 여러 프로젝트에 복사된 동일 세션을 찾아 개별 복사본 삭제
+- **마이그레이션:** 프로젝트 간 세션 복사(원본 유지), 경로 자동 갱신
 
----
+### Codex 세션
+- `~/.codex` rollout 세션을 작업 디렉토리별로 조회
+- 대화 미리보기, 개별 세션 삭제
 
-## 주요 기능
-
-### 📊 대시보드
-- 총 사용 비용 및 모델별(Opus / Sonnet / Haiku) 토큰/비용 통계
-- 일별 / 주별 / 월별 사용량 테이블
-- 프로젝트별 비용 Top 10 바 차트
-- 데이터 개요: 세션 수, 파일 히스토리, 디버그/투두 파일, 디스크 사용량
-
-### 📁 프로젝트 관리
-- `.claude.json` 기반 프로젝트 목록을 트리 구조로 표시
-- 세션 클릭 시 대화 내용 미리보기
-- 개별 세션 삭제, 설정에서 프로젝트 제거
-- Orphaned 세션 일괄 감지 및 정리
-- `--path` 옵션으로 특정 프로젝트만 필터링
-
-### 📋 파일 히스토리
-- Claude가 편집한 파일의 버전 스냅샷 관리
-- Orphaned 항목 감지 및 일괄 정리
-
-### 🐛 Debug / Todos
-- 디버그 로그 및 투두 메모 관리, 미리보기 패널
-- 빈 파일 및 Orphaned 파일 일괄 정리
-
-### 🔄 세션 마이그레이션
-- 프로젝트 간 세션 복사 (원본 유지)
-- **개별 세션 선택:** `Space`로 체크/해제, `Enter`로 대화 미리보기
-- Append / Overwrite 모드
-- 경로 참조 자동 업데이트
-
-### 💾 백업 / 복원
-- 설정 백업 (`.claude.json`) 또는 전체 백업 (`~/.claude`)
-- 복원 전 자동 안전 백업
-- 복원 실패 시 자동 롤백
+### 기본이 안전
+- 모든 삭제는 **OS 휴지통**으로, 감사 로그에 기록
+- 삭제 전 **복구 스냅샷** 생성 (Claude·Codex 모두)
+- 백업: Claude(config / settings / plugins / sessions / 전체), Codex(세션, 대용량 캐시 제외). 복원 시 자동 안전 백업 + 실패 롤백
 
 ---
 
-## 설치
+## 작동 방식
+
+```
+   ~/.claude  ┐
+              ├──►  asm  ──►  대시보드 하나  ──►  필터: All / Claude / Codex
+   ~/.codex   ┘              (비용 · 세션 · 정리 · 백업)
+```
+
+`asm`은 두 데이터 디렉토리를 직접 읽습니다 — 데몬·설정 없음. Claude는 프로젝트별, Codex는 작업 디렉토리별로 묶고, 비용은 각 세션에 기록된 토큰 사용량으로 계산합니다.
+
+| 경로 | 내용 |
+|:---|:---|
+| `~/.claude.json` · `~/.claude/projects/` | Claude 프로젝트·비용·세션 JSONL |
+| `~/.claude/file-history/` · `debug/` · `tasks/` | 스냅샷·디버그 로그·세션별 task 목록 |
+| `~/.codex/sessions/` | Codex rollout 세션 파일 |
+| `~/.asm/backups/` · `trash-log.jsonl` | 백업(기존 `~/.cc-tui`에서 자동 이전)·삭제 감사 로그 |
+
+---
+
+## 🛠️ 기술 스택
+
+- **TUI:** [Textual](https://github.com/Textualize/textual) + [Rich](https://github.com/Textualize/rich)
+- **안전장치:** [send2trash](https://github.com/arsenetar/send2trash) (`rm`이 아닌 OS 휴지통)
+- **세션:** [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) + JSONL 폴백 파서
+- **Python:** 3.11+
+
+---
+
+## 🚀 시작하기
+
+### 설치 (권장)
 
 ```bash
-# pip
-pip install cc-session-utils
-
 # uv
-uv tool install cc-session-utils
+uv tool install agent-session-manager
 
-# 소스에서 설치
-git clone https://github.com/Bae-ChangHyun/cc-session-utils.git
-cd cc-session-utils
-uv sync && uv run cc-tui
+# pip
+pip install agent-session-manager
 ```
 
-설치 후에는 `cc-tui`와 `cc-session-utils` 두 실행 명령이 함께 생기며, 둘 다 같은 앱을 실행합니다.
+둘 다 단일 `asm` 명령을 설치합니다. 최초 실행 시 기존 `~/.cc-tui` 데이터가 `~/.asm`로 자동 이전됩니다.
 
----
-
-## 사용법
+<details>
+<summary><strong>소스에서 실행</strong></summary>
 
 ```bash
-cc-tui                          # 기본 실행
-cc-session-utils                # 같은 앱을 실행하는 다른 명령어
-cc-tui --path /your/project     # 특정 프로젝트 필터링
-cc-tui --lang ko                # 한국어 UI
+git clone https://github.com/Bae-ChangHyun/agent-session-manager.git
+cd agent-session-manager
+uv sync && uv run asm
 ```
 
-### 키보드 단축키
+</details>
+
+### 사용법
+
+```bash
+asm                       # 실행 — Claude + Codex 함께 표시
+asm --source codex        # 대시보드를 Codex 필터로 시작
+asm --path /your/project  # 특정 Claude 프로젝트만
+asm --lang ko             # 한국어 UI  (또는 ASM_LANG=ko)
+asm --no-update-check     # 시작 시 업데이트 확인 건너뛰기
+```
+
+두 소스는 항상 함께 다룹니다. `--source`는 대시보드 초기 필터만 정하며, 실행 중 `s`로 언제든 바꿉니다.
+
+### 키보드
 
 | 키 | 동작 |
 |:---:|:---|
 | `F1`~`F6` | 탭 전환 |
-| `Tab` / `Shift+Tab` | 대시보드 기간(Daily / Weekly / Monthly) 순환 |
-| `1` / `2` / `3` | 대시보드 기간 바로 전환 |
-| `q` | 앱 종료 |
-| `r` | 전체 새로고침 |
-| `d` / `D` | 선택 삭제 / 전체 Orphaned 삭제 |
-| `Space` | 선택 토글 |
-| `Enter` | 세션 대화 미리보기 (Migrate 탭) |
+| `s` | 대시보드 소스 필터 (All / Claude / Codex) |
+| `Tab` / `Shift+Tab` · `1` `2` `3` | 대시보드 기간 (Daily / Weekly / Monthly) |
+| `d` / `D` | 선택 삭제 / 전체 고아 삭제 |
+| `Space` · `Enter` | 선택 토글 · 대화 미리보기 |
+| `r` · `q` | 전체 새로고침 · 종료 |
+
+### 업데이트
+
+PyPI에 새 버전이 있으면 `asm` 실행 시 `y/N` 업그레이드 프롬프트가 뜹니다(`uv tool` 또는 `pip`). 비대화형 셸·오프라인에서는 건너뜁니다.
 
 ---
 
-## 관리되는 데이터 경로
+## 🗺️ 로드맵
 
-| 경로 | 설명 |
-|:---|:---|
-| `~/.claude.json` | 프로젝트 목록, 비용, 모델 사용량 |
-| `~/.claude/projects/` | 세션 JSONL 파일 |
-| `~/.claude/file-history/` | 파일 버전 스냅샷 |
-| `~/.claude/debug/` | 디버그 로그 |
-| `~/.claude/todos/` | 투두 메모 |
-| `~/.cc-tui/backups/` | 백업 파일 |
-| `~/.cc-tui/trash-log.jsonl` | 삭제 이력 로그 |
+- [ ] Codex 세션 **복원**(현재는 백업/목록/삭제까지, 복원은 미구현)
+- [ ] 데이터 개요에 소스별 디스크 사용량·보존 힌트 추가
+- [ ] PyPI에 `agent-session-manager`로 배포
 
 ---
 
-## 주의사항
+## ⚠️ 상태 & 범위
 
-> **삭제 작업은 모두 OS 휴지통으로 이동**됩니다. 휴지통에서 복구 가능합니다.
->
-> 전체 백업은 `~/.claude` 통째로 복사하므로 디스크 용량을 확인하세요.
->
-> Claude Code **내부 데이터를 직접 조작**합니다. 중요 작업 전 반드시 백업하세요.
+- **개인용 / 프리릴리스**, 활발히 개발 중.
+- Claude Code·Codex 내부 데이터를 직접 다룹니다 — **대량 삭제 전 백업**하세요.
+- 삭제는 OS 휴지통 + 복구 스냅샷으로 처리, 제자리 `rm` 없음.
+- 무보증. Anthropic·OpenAI와 무관.
 
 ---
 
-## 라이선스
+## 📄 라이선스
 
 [MIT](LICENSE)
 
 <div align="center">
 <br/>
-Made with <b>Claude Code</b>
+Made with <b>Claude Code</b> · and now <b>Codex</b> too
 </div>

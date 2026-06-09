@@ -9,11 +9,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Static, Tree
 
-from cc_tui.i18n import t
-from cc_tui.services import codex_data
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.cleaner import trash_codex_session
-from cc_tui.widgets.action_bar import ActionBar
+from asm.i18n import t
+from asm.services import codex_data
+from asm.screens.confirm import ConfirmScreen
+from asm.services.cleaner import trash_codex_session
+from asm.widgets.action_bar import ActionBar
 
 
 class CodexSessionsPane(Container):

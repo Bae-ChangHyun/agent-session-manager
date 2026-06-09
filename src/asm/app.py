@@ -6,21 +6,21 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from cc_tui.i18n import t
-from cc_tui.screens.backups import BackupsPane
-from cc_tui.screens.codex_sessions import CodexSessionsPane
-from cc_tui.screens.dashboard import DashboardPane
-from cc_tui.screens.debug_todos import DebugTodosPane
-from cc_tui.screens.file_history import FileHistoryPane
-from cc_tui.screens.migrate import MigratePane
-from cc_tui.screens.projects import ProjectsPane
+from asm.i18n import t
+from asm.screens.backups import BackupsPane
+from asm.screens.codex_sessions import CodexSessionsPane
+from asm.screens.dashboard import DashboardPane
+from asm.screens.debug_todos import DebugTodosPane
+from asm.screens.file_history import FileHistoryPane
+from asm.screens.migrate import MigratePane
+from asm.screens.projects import ProjectsPane
 
 
 class CCTuiApp(App):
-    """Claude Code Session Manager TUI."""
+    """asm — Claude Code & Codex session/data manager TUI."""
 
-    TITLE = "CC-TUI"
-    SUB_TITLE = "Claude Code Session Manager"
+    TITLE = "asm"
+    SUB_TITLE = "Claude Code & Codex session manager"
 
     CSS = """
     Screen {
@@ -43,6 +43,10 @@ class CCTuiApp(App):
         Binding("shift+tab", "tab_nav_prev", "Previous", show=False, priority=True),
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("s", "dash_source", "Source", show=False),
+        Binding("1", "dash_daily", show=False),
+        Binding("2", "dash_weekly", show=False),
+        Binding("3", "dash_monthly", show=False),
         Binding("f1", "tab('tab-dashboard')", "Dashboard"),
         Binding("f2", "tab('tab-projects')", "Projects"),
         Binding("f3", "tab('tab-file-history')", "File History"),
@@ -51,52 +55,52 @@ class CCTuiApp(App):
         Binding("f6", "tab('tab-backups')", "Backups"),
     ]
 
-    def __init__(self, target_path: str | None = None, source: str = "claude", **kwargs):
+    def __init__(self, target_path: str | None = None, source: str = "all", **kwargs):
         super().__init__(**kwargs)
         if target_path:
             self.target_path = str(Path(target_path).resolve())
         else:
             self.target_path = None
+        # Initial dashboard source filter (all | claude | codex). Both sources
+        # are always loaded; this only sets the dashboard's starting view.
         self.source = source
-
-    @property
-    def is_codex(self) -> bool:
-        return self.source == "codex"
 
     @property
     def target_encoded(self) -> str | None:
         """Encoded project dir name for the target path."""
         if self.target_path:
-            from cc_tui.models import encode_path
+            from asm.models import encode_path
             return encode_path(self.target_path)
         return None
 
     def compose(self) -> ComposeResult:
-        if self.is_codex:
-            self.SUB_TITLE = "Codex Session Manager"
         if self.target_path:
             self.sub_title = f"Project: {self.target_path}"
         yield Header()
         with TabbedContent(id="main-tabs"):
             with TabPane(t("tab.dashboard"), id="tab-dashboard"):
                 yield DashboardPane()
-            if self.is_codex:
-                # Codex sessions are global rollouts; File History / Debug /
-                # Todos / Migrate have no Codex equivalent and are omitted.
-                with TabPane(t("tab.sessions"), id="tab-codex-sessions"):
+            # Claude-specific management tabs (operate on ~/.claude).
+            with TabPane(t("tab.projects"), id="tab-projects"):
+                yield ProjectsPane()
+            with TabPane(t("tab.file_history"), id="tab-file-history"):
+                yield FileHistoryPane()
+            with TabPane(t("tab.debug_todos"), id="tab-debug-todos"):
+                yield DebugTodosPane()
+            with TabPane(t("tab.migrate"), id="tab-migrate"):
+                yield MigratePane()
+            # Codex sessions (operate on ~/.codex); only shown when present.
+            if self._codex_available():
+                with TabPane(t("tab.codex_sessions"), id="tab-codex-sessions"):
                     yield CodexSessionsPane()
-            else:
-                with TabPane(t("tab.projects"), id="tab-projects"):
-                    yield ProjectsPane()
-                with TabPane(t("tab.file_history"), id="tab-file-history"):
-                    yield FileHistoryPane()
-                with TabPane(t("tab.debug_todos"), id="tab-debug-todos"):
-                    yield DebugTodosPane()
-                with TabPane(t("tab.migrate"), id="tab-migrate"):
-                    yield MigratePane()
             with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
         yield Footer()
+
+    @staticmethod
+    def _codex_available() -> bool:
+        from asm.services import codex_data
+        return codex_data.is_available()
 
     def action_tab(self, tab_id: str) -> None:
         """Switch to a specific tab by ID (ignored if the tab isn't present)."""
@@ -106,6 +110,42 @@ class CCTuiApp(App):
         except Exception:
             return
         tabs.active = tab_id
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Focus the dashboard pane when its tab opens so its shortcuts work."""
+        if event.tabbed_content.id != "main-tabs":
+            return
+        if event.tab.id == "tab-dashboard":
+            self.call_after_refresh(self._focus_dashboard)
+
+    def _focus_dashboard(self) -> None:
+        try:
+            self.query_one("DashboardPane").focus()
+        except Exception:
+            pass
+
+    def _dashboard_active(self) -> bool:
+        try:
+            return self.query_one("#main-tabs", TabbedContent).active == "tab-dashboard"
+        except Exception:
+            return False
+
+    def _dash(self, period: str | None) -> None:
+        if self._dashboard_active():
+            dash = self.query_one("DashboardPane")
+            dash.action_source_cycle() if period is None else dash.action_period(period)
+
+    def action_dash_source(self) -> None:
+        self._dash(None)
+
+    def action_dash_daily(self) -> None:
+        self._dash("daily")
+
+    def action_dash_weekly(self) -> None:
+        self._dash("weekly")
+
+    def action_dash_monthly(self) -> None:
+        self._dash("monthly")
 
     def action_tab_nav_next(self) -> None:
         """Handle Tab navigation, with dashboard period cycling override."""
@@ -125,9 +165,8 @@ class CCTuiApp(App):
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""
-        if self.is_codex:
-            from cc_tui.services import codex_data
-            codex_data.refresh()
+        from asm.services import codex_data
+        codex_data.refresh()
         for pane in self.query(
             "DashboardPane, ProjectsPane, CodexSessionsPane, FileHistoryPane, "
             "DebugTodosPane, MigratePane, BackupsPane"

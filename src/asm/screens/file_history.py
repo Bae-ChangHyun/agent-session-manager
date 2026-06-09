@@ -6,12 +6,12 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
-from cc_tui.models import decode_path_hint, encode_path
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.claude_data import get_file_history, get_project_paths, get_session_to_project_map
-from cc_tui.i18n import t
-from cc_tui.services.cleaner import trash_file_history, trash_file_histories
-from cc_tui.widgets.action_bar import ActionBar
+from asm.models import decode_path_hint, encode_path
+from asm.screens.confirm import ConfirmScreen
+from asm.services.claude_data import get_file_history, get_project_paths, get_session_to_project_map
+from asm.i18n import t
+from asm.services.cleaner import trash_file_history, trash_file_histories
+from asm.widgets.action_bar import ActionBar
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 

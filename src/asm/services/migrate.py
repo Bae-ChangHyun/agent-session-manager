@@ -10,7 +10,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import PROJECTS_DIR, decode_path_hint, encode_path
+from asm.models import PROJECTS_DIR, decode_path_hint, encode_path
 
 
 @dataclass

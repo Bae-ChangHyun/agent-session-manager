@@ -11,10 +11,10 @@ from textual.widgets import Input, Static, Tree
 
 from rich.markup import escape
 
-from cc_tui.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.backup import create_config_backup
-from cc_tui.services.claude_data import (
+from asm.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
+from asm.screens.confirm import ConfirmScreen
+from asm.services.backup import create_config_backup
+from asm.services.claude_data import (
     find_duplicate_sessions,
     get_project_sessions,
     get_projects,
@@ -23,10 +23,10 @@ from cc_tui.services.claude_data import (
     load_claude_json,
     remove_project_from_json,
 )
-from cc_tui.i18n import t
-from cc_tui.services.cleaner import trash_sessions, trash_single_session_file
-from cc_tui.utils import format_bytes
-from cc_tui.widgets.action_bar import ActionBar
+from asm.i18n import t
+from asm.services.cleaner import trash_sessions, trash_single_session_file
+from asm.utils import format_bytes
+from asm.widgets.action_bar import ActionBar
 
 
 class ProjectsPane(Container):

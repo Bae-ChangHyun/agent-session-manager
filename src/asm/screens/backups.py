@@ -6,9 +6,9 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.widgets import DataTable, Input, Static
 
-from cc_tui.i18n import t
-from cc_tui.screens.confirm import ConfirmScreen
-from cc_tui.services.backup import (
+from asm.i18n import t
+from asm.screens.confirm import ConfirmScreen
+from asm.services.backup import (
     create_codex_backup,
     create_config_backup,
     create_full_backup,
@@ -27,13 +27,13 @@ from cc_tui.services.backup import (
     restore_sessions_backup,
     restore_settings_backup,
 )
-from cc_tui.services.recovery import (
+from asm.services.recovery import (
     delete_recovery_item,
     list_recovery_items,
     restore_recovery_item,
 )
-from cc_tui.utils import format_bytes
-from cc_tui.widgets.action_bar import ActionBar
+from asm.utils import format_bytes
+from asm.widgets.action_bar import ActionBar
 
 
 class BackupsPane(Container):
@@ -141,18 +141,16 @@ class BackupsPane(Container):
     # ── Actions bar ──────────────────────────────────────────
 
     def _render_actions(self) -> None:
-        if getattr(self.app, "is_codex", False):
-            create_actions = [
-                ("codex-backup", t("bak.btn_codex"), "#0178d4"),
-            ]
-        else:
-            create_actions = [
-                ("config-backup", t("bak.btn_config"), "#0178d4"),
-                ("settings-backup", t("bak.btn_settings"), "#0178d4"),
-                ("plugins-backup", t("bak.btn_plugins"), "#0178d4"),
-                ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
-                ("full-backup", t("bak.btn_full"), "#0178d4"),
-            ]
+        create_actions = [
+            ("config-backup", t("bak.btn_config"), "#0178d4"),
+            ("settings-backup", t("bak.btn_settings"), "#0178d4"),
+            ("plugins-backup", t("bak.btn_plugins"), "#0178d4"),
+            ("sessions-backup", t("bak.btn_sessions"), "#0178d4"),
+            ("full-backup", t("bak.btn_full"), "#0178d4"),
+        ]
+        from asm.services import codex_data
+        if codex_data.is_available():
+            create_actions.append(("codex-backup", t("bak.btn_codex"), "#10A37F"))
         self.query_one("#backup-create-actions", ActionBar).set_actions(
             create_actions, on_action=self._handle_action
         )
@@ -681,7 +679,7 @@ class BackupsPane(Container):
             )
 
     def _click_import(self) -> None:
-        from cc_tui.screens.input_dialog import InputDialog
+        from asm.screens.input_dialog import InputDialog
 
         self.app.push_screen(
             InputDialog(
