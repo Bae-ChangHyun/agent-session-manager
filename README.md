@@ -5,6 +5,7 @@
 **One terminal dashboard for everything Claude Code and Codex leave behind.**
 See cost, browse sessions, and clean up `~/.claude` and `~/.codex` — side by side, with a Claude / Codex filter.
 
+[![PyPI](https://img.shields.io/pypi/v/agent-session-manager?style=flat-square&color=blue)](https://pypi.org/project/agent-session-manager/)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Built with Textual](https://img.shields.io/badge/Built%20with-Textual-5A2CA0?style=flat-square)](https://github.com/Textualize/textual)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
@@ -59,12 +60,13 @@ same view filtered to **Claude** and to **Codex**:
 - **Move a Codex session** to another working directory (rewrites its `cwd`, which is how `codex resume --cd` associates sessions)
 - **Orphan cleanup:** detect and bulk-clean Claude sessions, file-history, debug, and task entries with no matching project
 - **Duplicate sessions:** find the same session copied across projects and delete individual copies
+- **Empty sessions:** clean stub sessions that hold only a title/metadata and no conversation (can't be resumed)
 - **Migration:** copy Claude sessions between projects (originals preserved), with paths auto-rewritten
 
 ### Safe by default
 - Every delete goes to the **OS trash** and is recorded in an audit log
-- **Recovery snapshots** are taken before trashing (Claude and Codex)
-- Backups for Claude (config / settings / plugins / sessions / full) and Codex (sessions, excluding huge caches), with auto safety-backup and rollback on restore
+- **Recovery snapshots** are taken before trashing (Claude and Codex), with a size/age cap so they don't pile up
+- Backups for Claude (config / settings / plugins / sessions / full) and Codex (sessions, excluding huge caches); restore is rollback-safe, and credential-bearing backups are written owner-only (0600)
 
 ---
 
@@ -153,8 +155,9 @@ When a newer release is on PyPI, `asm` offers a `y/N` upgrade prompt on startup 
 ## 🗺️ Roadmap
 
 - [ ] Codex session **restore** (backup / list / delete exist today; restore does not)
-- [ ] Per-source disk-usage and retention hints in the data overview
-- [ ] Publish to PyPI as `agent-session-manager`
+- [ ] Per-source disk-usage in the data overview
+- [ ] Incremental (mtime-based) usage scan for very large `~/.claude` trees
+- [ ] ruff + mypy in CI
 
 ---
 

@@ -5,6 +5,7 @@
 **Claude Code와 Codex가 남기는 모든 것을, 터미널 대시보드 하나로.**
 `~/.claude`와 `~/.codex`의 비용·세션을 한 화면에서 보고, Claude / Codex 필터로 정리합니다.
 
+[![PyPI](https://img.shields.io/pypi/v/agent-session-manager?style=flat-square&color=blue)](https://pypi.org/project/agent-session-manager/)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Built with Textual](https://img.shields.io/badge/Built%20with-Textual-5A2CA0?style=flat-square)](https://github.com/Textualize/textual)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
@@ -58,12 +59,13 @@
 - **Codex 세션 이동:** 다른 작업 디렉토리로 이동(세션의 `cwd` 재작성 — `codex resume --cd`가 세션을 연결하는 방식)
 - **고아 정리:** 매칭 프로젝트 없는 Claude 세션·파일히스토리·디버그·task 일괄 정리
 - **중복 세션:** 여러 프로젝트에 복사된 동일 세션을 찾아 개별 복사본 삭제
+- **빈 세션:** 제목/메타만 있고 대화가 없는(resume 불가) stub 세션 정리
 - **마이그레이션:** Claude 프로젝트 간 세션 복사(원본 유지), 경로 자동 갱신
 
 ### 기본이 안전
 - 모든 삭제는 **OS 휴지통**으로, 감사 로그에 기록
-- 삭제 전 **복구 스냅샷** 생성 (Claude·Codex 모두)
-- 백업: Claude(config / settings / plugins / sessions / 전체), Codex(세션, 대용량 캐시 제외). 복원 시 자동 안전 백업 + 실패 롤백
+- 삭제 전 **복구 스냅샷** 생성 (Claude·Codex 모두), 용량/개수 상한으로 무한 누적 방지
+- 백업: Claude(config / settings / plugins / sessions / 전체), Codex(세션, 대용량 캐시 제외). 복원은 롤백 안전, 자격증명 포함 백업은 소유자 전용(0600)으로 저장
 
 ---
 
@@ -152,8 +154,9 @@ PyPI에 새 버전이 있으면 `asm` 실행 시 `y/N` 업그레이드 프롬프
 ## 🗺️ 로드맵
 
 - [ ] Codex 세션 **복원**(현재는 백업/목록/삭제까지, 복원은 미구현)
-- [ ] 데이터 개요에 소스별 디스크 사용량·보존 힌트 추가
-- [ ] PyPI에 `agent-session-manager`로 배포
+- [ ] 데이터 개요에 소스별 디스크 사용량 표시
+- [ ] 대용량 `~/.claude` 대상 증분(mtime 기반) 사용량 스캔
+- [ ] CI에 ruff + mypy
 
 ---
 
