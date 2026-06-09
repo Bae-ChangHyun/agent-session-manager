@@ -37,13 +37,10 @@ If you live in **Claude Code** and **Codex**, the two of them quietly fill `~/.c
 
 ## Demo
 
-<!--
-TODO: the GIF below predates the Codex + combined-dashboard update — re-record with:
-- `terminal-gif-maker` skill (say "터미널 데모 GIF 만들어줘")
-- output: docs/demo.gif (+ keep the .tape so it can be regenerated)
--->
+The combined dashboard (cost across both agents, source-tagged rows), then the
+same view filtered to **Claude** and to **Codex**:
 
-<img src="docs/demo.gif" alt="asm demo" width="780"/>
+<img src="docs/demo.gif" alt="asm demo" width="820"/>
 
 ---
 
@@ -156,7 +153,6 @@ When a newer release is on PyPI, `asm` offers a `y/N` upgrade prompt on startup 
 
 ## 🗺️ Roadmap
 
-- [ ] Re-record the demo GIF for the combined Claude + Codex dashboard
 - [ ] Codex session **restore** (backup / list / delete exist today; restore does not)
 - [ ] Per-source disk-usage and retention hints in the data overview
 - [ ] Publish to PyPI as `agent-session-manager`

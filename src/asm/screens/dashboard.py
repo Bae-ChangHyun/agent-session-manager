@@ -78,6 +78,10 @@ def _merge_periods(period_lists: dict[str, list]) -> list:
 
 
 class DashboardPane(Container):
+    # Focusable so its key bindings (s / 1 / 2 / 3) work right after the tab opens
+    # without the user having to click into the pane first.
+    can_focus = True
+
     BINDINGS = [
         Binding("tab", "period_next", "Next Period", show=False, priority=True),
         Binding("shift+tab", "period_prev", "Previous Period", show=False, priority=True),
@@ -197,6 +201,12 @@ class DashboardPane(Container):
         for wid in self.CONTENT_IDS:
             self.query_one(f"#{wid}").display = True
         self._render_all()
+        # Take focus so 's' / '1' / '2' / '3' work without a click.
+        try:
+            if self.app.query_one("#main-tabs", TabbedContent).active == "tab-dashboard":
+                self.focus()
+        except Exception:
+            pass
 
     def _on_bg_period_loaded(self, key: str, data: dict) -> None:
         """Callback for background-loaded weekly/monthly data (per source)."""

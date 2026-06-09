@@ -37,13 +37,9 @@
 
 ## 데모
 
-<!--
-TODO: 아래 GIF는 Codex·통합 대시보드 추가 이전 화면입니다 — 재녹화:
-- `terminal-gif-maker` 스킬 ("터미널 데모 GIF 만들어줘")
-- 산출물: docs/demo.gif (.tape도 함께 커밋해 재생성 가능하게)
--->
+통합 대시보드(두 에이전트 합산 비용, 소스 태그된 행) → 같은 화면을 **Claude** / **Codex**로 필터링:
 
-<img src="docs/demo.gif" alt="asm 데모" width="780"/>
+<img src="docs/demo.gif" alt="asm 데모" width="820"/>
 
 ---
 
@@ -156,7 +152,6 @@ PyPI에 새 버전이 있으면 `asm` 실행 시 `y/N` 업그레이드 프롬프
 
 ## 🗺️ 로드맵
 
-- [ ] 통합 Claude + Codex 대시보드용 데모 GIF 재녹화
 - [ ] Codex 세션 **복원**(현재는 백업/목록/삭제까지, 복원은 미구현)
 - [ ] 데이터 개요에 소스별 디스크 사용량·보존 힌트 추가
 - [ ] PyPI에 `agent-session-manager`로 배포

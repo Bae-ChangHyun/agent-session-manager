@@ -43,6 +43,10 @@ class CCTuiApp(App):
         Binding("shift+tab", "tab_nav_prev", "Previous", show=False, priority=True),
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("s", "dash_source", "Source", show=False),
+        Binding("1", "dash_daily", show=False),
+        Binding("2", "dash_weekly", show=False),
+        Binding("3", "dash_monthly", show=False),
         Binding("f1", "tab('tab-dashboard')", "Dashboard"),
         Binding("f2", "tab('tab-projects')", "Projects"),
         Binding("f3", "tab('tab-file-history')", "File History"),
@@ -106,6 +110,42 @@ class CCTuiApp(App):
         except Exception:
             return
         tabs.active = tab_id
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Focus the dashboard pane when its tab opens so its shortcuts work."""
+        if event.tabbed_content.id != "main-tabs":
+            return
+        if event.tab.id == "tab-dashboard":
+            self.call_after_refresh(self._focus_dashboard)
+
+    def _focus_dashboard(self) -> None:
+        try:
+            self.query_one("DashboardPane").focus()
+        except Exception:
+            pass
+
+    def _dashboard_active(self) -> bool:
+        try:
+            return self.query_one("#main-tabs", TabbedContent).active == "tab-dashboard"
+        except Exception:
+            return False
+
+    def _dash(self, period: str | None) -> None:
+        if self._dashboard_active():
+            dash = self.query_one("DashboardPane")
+            dash.action_source_cycle() if period is None else dash.action_period(period)
+
+    def action_dash_source(self) -> None:
+        self._dash(None)
+
+    def action_dash_daily(self) -> None:
+        self._dash("daily")
+
+    def action_dash_weekly(self) -> None:
+        self._dash("weekly")
+
+    def action_dash_monthly(self) -> None:
+        self._dash("monthly")
 
     def action_tab_nav_next(self) -> None:
         """Handle Tab navigation, with dashboard period cycling override."""
