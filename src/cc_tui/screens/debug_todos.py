@@ -6,12 +6,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
-from cc_tui.models import DEBUG_DIR, TODOS_DIR
+from cc_tui.models import DEBUG_DIR
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.claude_data import get_debug_files, get_todos, get_session_to_project_map
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import (
     count_empty_files,
+    count_empty_todos,
     prune_empty_debug_files,
     prune_empty_todo_files,
     trash_debug_file,
@@ -139,7 +140,7 @@ class DebugTodosPane(Container):
         debug = get_debug_files()
         todos = get_todos()
         empty_debug = count_empty_files(DEBUG_DIR)
-        empty_todo = count_empty_files(TODOS_DIR)
+        empty_todo = count_empty_todos()
         session_to_project = get_session_to_project_map()
         self.app.call_from_thread(self._set_data, debug, todos, empty_debug, empty_todo, session_to_project)
 
@@ -416,17 +417,34 @@ class DebugTodosPane(Container):
             if p.is_file():
                 content = p.read_text(errors="replace")[:2000]
             elif p.is_dir():
-                all_files = list(p.iterdir())
-                files = all_files[:20]
-                content = f"Directory with {len(all_files)} items:\n\n"
-                for f in files:
-                    size = f.stat().st_size if f.is_file() else 0
-                    content += f"  {f.name}  ({format_bytes(size)})\n"
+                content = self._preview_task_dir(p)
             else:
                 content = "(not found)"
         except OSError as e:
             content = f"(read error: {e})"
         self.app.call_from_thread(self._show_preview, name, content)
+
+    def _preview_task_dir(self, p: Path) -> str:
+        """Render a tasks/<sessionId>/ directory as a checklist of task items."""
+        import json
+
+        task_files = sorted(
+            (f for f in p.iterdir() if f.is_file() and f.suffix == ".json"),
+            key=lambda f: int(f.stem) if f.stem.isdigit() else 0,
+        )
+        if not task_files:
+            return "[]"
+        status_mark = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+        lines = [f"{len(task_files)} task(s):", ""]
+        for f in task_files[:50]:
+            try:
+                data = json.loads(f.read_text(errors="replace"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            mark = status_mark.get(data.get("status", ""), "[ ]")
+            subject = data.get("subject", "") or data.get("activeForm", "") or f.name
+            lines.append(f"  {mark} {subject}")
+        return "\n".join(lines)
 
     def _show_preview(self, name: str, content: str) -> None:
         from rich.text import Text

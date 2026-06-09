@@ -10,7 +10,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TODOS_DIR
+from cc_tui.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
 from cc_tui.services.recovery import create_recovery_snapshot
 
 logger = logging.getLogger(__name__)
@@ -169,8 +169,14 @@ def trash_debug_files(names: list[str]) -> tuple[int, int]:
 
 
 def trash_todo_file(name: str) -> bool:
-    """Move a todo file to trash."""
-    target = TODOS_DIR / name
+    """Move a todo/task entry to trash.
+
+    ``name`` is a session id (a ``tasks/<sessionId>/`` directory) on Claude Code
+    >= 2.1, or a legacy ``todos/*.json`` filename on older versions.
+    """
+    target = TASKS_DIR / name
+    if not target.exists():
+        target = TODOS_DIR / name
     if not target.exists():
         return False
     try:
@@ -180,7 +186,7 @@ def trash_todo_file(name: str) -> bool:
         send2trash(str(resolved))
         return True
     except (ValueError, PermissionError, OSError) as e:
-        logger.warning("Failed to trash todo file %s: %s", name, e)
+        logger.warning("Failed to trash todo entry %s: %s", name, e)
         return False
 
 
@@ -201,8 +207,53 @@ def prune_empty_debug_files() -> tuple[int, int]:
 
 
 def prune_empty_todo_files() -> tuple[int, int]:
-    """Find and trash empty todo files ([], {}, or empty content)."""
+    """Find and trash empty todo/task entries.
+
+    On Claude Code >= 2.1 this trashes ``tasks/<sessionId>/`` directories that
+    hold no task json files (only lock/highwatermark housekeeping files). On
+    older versions it trashes empty ``todos/*.json`` files.
+    """
+    if TASKS_DIR.exists():
+        return _prune_empty_task_dirs()
     return _prune_empty_in_dir(TODOS_DIR, "todo")
+
+
+def _task_dir_is_empty(d: Path) -> bool:
+    """A task dir is empty if it has no task json files (locks don't count)."""
+    try:
+        return not any(f.suffix == ".json" for f in d.iterdir() if f.is_file())
+    except (PermissionError, OSError):
+        return False
+
+
+def _prune_empty_task_dirs() -> tuple[int, int]:
+    """Trash tasks/<sessionId>/ directories that contain no task json files."""
+    if not TASKS_DIR.exists():
+        return 0, 0
+    ok, fail = 0, 0
+    for d in TASKS_DIR.iterdir():
+        if not d.is_dir() or not _task_dir_is_empty(d):
+            continue
+        try:
+            resolved = _validate_path(d)
+            create_recovery_snapshot(resolved, "todo")
+            _log_trash(resolved, "todo")
+            send2trash(str(resolved))
+            ok += 1
+        except (ValueError, PermissionError, OSError) as e:
+            logger.warning("Failed to prune empty task dir %s: %s", d.name, e)
+            fail += 1
+    return ok, fail
+
+
+def count_empty_todos() -> int:
+    """Count empty todo/task entries (task dirs with no json, or empty legacy files)."""
+    if TASKS_DIR.exists():
+        try:
+            return sum(1 for d in TASKS_DIR.iterdir() if d.is_dir() and _task_dir_is_empty(d))
+        except (PermissionError, OSError):
+            return 0
+    return count_empty_files(TODOS_DIR)
 
 
 def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int, int]:

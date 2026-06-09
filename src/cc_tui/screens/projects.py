@@ -11,10 +11,11 @@ from textual.widgets import Input, Static, Tree
 
 from rich.markup import escape
 
-from cc_tui.models import PROJECTS_DIR, ProjectInfo, encode_path
+from cc_tui.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
 from cc_tui.screens.confirm import ConfirmScreen
 from cc_tui.services.backup import create_config_backup
 from cc_tui.services.claude_data import (
+    find_duplicate_sessions,
     get_project_sessions,
     get_projects,
     get_session_messages,
@@ -24,6 +25,7 @@ from cc_tui.services.claude_data import (
 )
 from cc_tui.i18n import t
 from cc_tui.services.cleaner import trash_sessions, trash_single_session_file
+from cc_tui.utils import format_bytes
 from cc_tui.widgets.action_bar import ActionBar
 
 
@@ -108,6 +110,7 @@ class ProjectsPane(Container):
         self._project_map: dict[str, ProjectInfo] = {}
         self._all_projects: list[ProjectInfo] = []
         self._all_orphaned_sessions = []
+        self._all_duplicates: dict[str, list[str]] = {}
         self._filter_query = ""
         self._sort_mode = "path"
 
@@ -122,14 +125,17 @@ class ProjectsPane(Container):
     def _load_projects(self) -> None:
         projects = get_projects()
         orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
+        duplicates = find_duplicate_sessions()
         if self.app.target_path:
             projects = [p for p in projects if p.path == self.app.target_path]
             orphaned_sessions = []
-        self.app.call_from_thread(self._set_project_data, projects, orphaned_sessions)
+            duplicates = {}
+        self.app.call_from_thread(self._set_project_data, projects, orphaned_sessions, duplicates)
 
-    def _set_project_data(self, projects: list[ProjectInfo], orphaned_sessions) -> None:
+    def _set_project_data(self, projects: list[ProjectInfo], orphaned_sessions, duplicates=None) -> None:
         self._all_projects = projects
         self._all_orphaned_sessions = orphaned_sessions or []
+        self._all_duplicates = duplicates or {}
         self._build_tree_from_state()
 
     def _build_tree_from_state(self) -> None:
@@ -178,6 +184,39 @@ class ProjectsPane(Container):
 
         # Render the tree, collapsing long chains of single-child dirs
         self._render_tree_nodes(tree.root, root_nodes, "", all_paths)
+
+        # Duplicate sessions (same session id in 2+ project dirs) — listed for
+        # manual review/deletion, not auto-cleaned.
+        self._render_duplicates(tree.root)
+
+    def _render_duplicates(self, root) -> None:
+        """Add a top-level group listing duplicated sessions and their copies."""
+        dups = self._all_duplicates
+        if not dups:
+            return
+        group = root.add(
+            f"[bold yellow]⚠ {t('proj.duplicates_title')} ({len(dups)})[/]",
+            data=("dup_group", None),
+            expand=False,
+        )
+        for sid in sorted(dups):
+            dirs = dups[sid]
+            sid_node = group.add(
+                f"[yellow]{sid[:12]}…[/]  [dim]({len(dirs)} {t('proj.copies')})[/]",
+                data=("dup_session", sid),
+                expand=True,
+            )
+            for dir_name in sorted(dirs):
+                jsonl = PROJECTS_DIR / dir_name / f"{sid}.jsonl"
+                try:
+                    size = jsonl.stat().st_size if jsonl.exists() else 0
+                except OSError:
+                    size = 0
+                hint = decode_path_hint(dir_name)
+                sid_node.add_leaf(
+                    f"{hint}  [dim]({format_bytes(size)})[/]",
+                    data=("dup_copy", sid, dir_name),
+                )
 
     def _render_tree_actions(self) -> None:
         """Render orphaned sessions action bar below tree."""
@@ -346,6 +385,35 @@ class ProjectsPane(Container):
                 show_remove_config=False,
             )
             self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
+        elif kind == "dup_copy":
+            session_id = node_data[1]
+            project_dir = node_data[2]
+            self._selected_session = (session_id, project_dir)
+            self._selected_session_node = event.node
+            self._selected_project_path = None
+            self._render_detail_actions(
+                show_trash_session=True,
+                show_remove_config=False,
+            )
+            self._show_duplicate_detail(session_id, project_dir)
+            self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
+
+    def _show_duplicate_detail(self, session_id: str, project_dir: str) -> None:
+        """Show which project dirs hold copies of a duplicated session."""
+        header = self.query_one("#project-detail-header", Static)
+        body = self.query_one("#project-detail-body", Static)
+        header.update(f"[bold yellow]{t('proj.duplicate_session')}[/] {session_id[:16]}…")
+        dirs = self._all_duplicates.get(session_id, [])
+        lines = [t("proj.duplicate_hint"), ""]
+        for dir_name in sorted(dirs):
+            jsonl = PROJECTS_DIR / dir_name / f"{session_id}.jsonl"
+            try:
+                size = jsonl.stat().st_size if jsonl.exists() else 0
+            except OSError:
+                size = 0
+            mark = "[green]▸[/] " if dir_name == project_dir else "  "
+            lines.append(f"{mark}{decode_path_hint(dir_name)}  [dim]({format_bytes(size)})[/]")
+        body.update("\n".join(lines))
 
     def _show_project_detail(self, p: ProjectInfo, session_count: int = 0) -> None:
         header = self.query_one("#project-detail-header", Static)

@@ -99,6 +99,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",
         "ko": "Orphaned 세션 디렉토리를 모두 삭제?\n\n매칭 프로젝트 없는 {count}개.\n[dim]휴지통으로 이동, 복구 가능[/]",
     },
+    "proj.duplicates_title": {"en": "Duplicate Sessions", "ko": "중복 세션"},
+    "proj.copies": {"en": "copies", "ko": "곳"},
+    "proj.duplicate_session": {"en": "Duplicate session", "ko": "중복 세션"},
+    "proj.duplicate_hint": {
+        "en": "[dim]Same session id exists in multiple project dirs. Select a copy and press [b]d[/] to delete just that one.[/]",
+        "ko": "[dim]같은 세션 id가 여러 프로젝트 디렉토리에 존재합니다. 복사본을 선택하고 [b]d[/]를 눌러 해당 복사본만 삭제하세요.[/]",
+    },
     # ── File History ── detail panel status descriptions
     "fh.status_orphaned_desc": {
         "en": (

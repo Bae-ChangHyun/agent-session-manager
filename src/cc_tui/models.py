@@ -44,6 +44,9 @@ SESSION_ENV_DIR = CLAUDE_DIR / "session-env"
 FILE_HISTORY_DIR = CLAUDE_DIR / "file-history"
 DEBUG_DIR = CLAUDE_DIR / "debug"
 TODOS_DIR = CLAUDE_DIR / "todos"
+# Claude Code >= 2.1 stores per-session task/todo lists under tasks/<sessionId>/<n>.json
+# (the old flat todos/<sessionId>-agent-<id>.json layout was removed).
+TASKS_DIR = CLAUDE_DIR / "tasks"
 PLUGINS_DIR = CLAUDE_DIR / "plugins"
 SKILLS_DIR = CLAUDE_DIR / "skills"
 BACKUP_BASE_DIR = Path.home() / ".cc-tui" / "backups"
