@@ -210,12 +210,6 @@ class DashboardPane(Container):
         except Exception:
             pass
 
-    def _on_bg_period_loaded(self, key: str, data: dict) -> None:
-        """Callback for background-loaded weekly/monthly data (per source)."""
-        self._raw_periods[key] = data
-        if self._period == key:
-            self._render_period_section()
-
     # ── Source filter (All / Claude / Codex) ──────────────────────────
     def _has_codex(self) -> bool:
         return "codex" in self._raw_usage
@@ -346,6 +340,16 @@ class DashboardPane(Container):
                 f"  {'Projects (cwd)':20s} {codex.total_projects:>6d}",
                 f"  {'Sessions':20s} {codex.total_sessions:>6d}",
             ]
+            # Codex cost/usage is computed from a recent window — say so when the
+            # session count exceeds it, so the headline isn't mistaken for a total.
+            try:
+                from asm.services import codex_data
+                if codex.total_sessions > codex_data.SCAN_LIMIT:
+                    lines.append(
+                        f"  [yellow]※ cost from most recent {codex_data.SCAN_LIMIT} sessions[/]"
+                    )
+            except Exception:
+                pass
         return "\n".join(lines)
 
     def _render_period_section(self) -> None:
@@ -391,11 +395,9 @@ class DashboardPane(Container):
                 self.action_period(period)
 
     def action_period(self, key: str) -> None:
-        """Switch period via keyboard (1/2/3)."""
+        """Switch the displayed period (all three are preloaded in _load)."""
         self._period = key
         self._render_period_section()
-        if key not in self._raw_periods:
-            self.run_worker(lambda k=key: self._load_period(k), thread=True)
 
     def action_period_next(self) -> None:
         """Cycle to the next dashboard period immediately."""
@@ -408,13 +410,3 @@ class DashboardPane(Container):
         order = ["daily", "weekly", "monthly"]
         idx = order.index(self._period)
         self.action_period(order[(idx - 1) % len(order)])
-
-    def _load_period(self, key: str) -> None:
-        mods = self._source_modules()
-        data = {s: m.get_period_usage(key) for s, m in mods.items()}
-        self.app.call_from_thread(self._on_period_loaded, key, data)
-
-    def _on_period_loaded(self, key: str, data: dict) -> None:
-        self._raw_periods[key] = data
-        if self._period == key:
-            self._render_period_section()

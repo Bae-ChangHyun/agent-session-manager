@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 _SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
+# Retention for recovery snapshots — without this the "cleanup" tool would grow
+# ~/.asm/recovery without bound (every trash duplicates data here + OS trash).
+_MAX_ITEMS = 100
+_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+
 
 def _validate_original_path(path: Path) -> Path:
     resolved = path.resolve()
@@ -57,6 +62,10 @@ def create_recovery_snapshot(path: Path, category: str) -> str | None:
     try:
         original = _validate_original_path(path)
         RECOVERY_BASE_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            RECOVERY_BASE_DIR.chmod(0o700)  # may hold session transcripts
+        except OSError:
+            pass
 
         item_id = f"{datetime.now():%Y%m%d-%H%M%S-%f}-{_safe_name(original.name)}"
         item_root = RECOVERY_BASE_DIR / item_id
@@ -86,10 +95,30 @@ def create_recovery_snapshot(path: Path, category: str) -> str | None:
         (item_root / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2)
         )
+        _prune_snapshots()
         return item_id
     except (OSError, ValueError, shutil.Error) as exc:
         logger.warning("Failed to create recovery snapshot for %s: %s", path, exc)
         return None
+
+
+def _prune_snapshots() -> None:
+    """Drop oldest snapshots beyond the item-count or total-size cap."""
+    try:
+        items = [d for d in RECOVERY_BASE_DIR.iterdir() if d.is_dir()]
+    except OSError:
+        return
+    items.sort(key=lambda d: d.name)  # timestamp-prefixed → chronological
+    sizes = {d: _payload_size(d) for d in items}
+    total = sum(sizes.values())
+    # Oldest-first removal until within both caps.
+    while items and (len(items) > _MAX_ITEMS or total > _MAX_TOTAL_BYTES):
+        victim = items.pop(0)
+        total -= sizes.get(victim, 0)
+        try:
+            shutil.rmtree(victim, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def list_recovery_items() -> list[RecoveryInfo]:
@@ -133,7 +162,12 @@ def restore_recovery_item(item_id: str, overwrite: bool = False) -> tuple[bool, 
         item_root = _recovery_root(item_id)
         data = json.loads((item_root / "metadata.json").read_text())
         original = _validate_original_path(Path(data["original_path"]))
+        # Trust boundary: the snapshot source must live under the recovery dir,
+        # so a tampered metadata.json can't copy an arbitrary file into a managed
+        # location (CWE-22/502).
         snapshot = Path(data["snapshot_path"])
+        if not snapshot.resolve().is_relative_to(RECOVERY_BASE_DIR.resolve()):
+            return False, "Snapshot path outside recovery dir"
         if not snapshot.exists():
             return False, "Snapshot payload is missing"
 

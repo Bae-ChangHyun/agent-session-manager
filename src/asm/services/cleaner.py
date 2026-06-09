@@ -316,19 +316,3 @@ def trash_codex_session(path: str | Path) -> bool:
     except (ValueError, PermissionError, OSError) as e:
         logger.warning("Failed to trash codex session %s: %s", path, e)
         return False
-
-
-def trash_path(path: str | Path) -> bool:
-    """Generic: move any path to trash."""
-    p = Path(path)
-    if not p.exists():
-        return False
-    try:
-        resolved = _validate_path(p)
-        create_recovery_snapshot(resolved, "generic")
-        _log_trash(resolved, "generic")
-        send2trash(str(resolved))
-        return True
-    except (ValueError, PermissionError, OSError) as e:
-        logger.warning("Failed to trash path %s: %s", path, e)
-        return False

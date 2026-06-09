@@ -11,3 +11,6 @@ wheels/
 
 # Project
 todo.md
+.omx/
+.oss-review/
+oss-review-report*.md

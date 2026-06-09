@@ -8,34 +8,15 @@ _current_lang = "en"
 
 TRANSLATIONS: dict[str, dict[str, str]] = {
     # ── App ──
-    "app.quit": {"en": "Quit", "ko": "종료"},
-    "app.refresh": {"en": "Refresh", "ko": "새로고침"},
     "app.refreshed": {"en": "Refreshed", "ko": "새로고침 완료"},
-    "common.search_placeholder": {"en": "Filter / search...", "ko": "검색 / 필터..."},
-    "common.sort": {"en": "Sort", "ko": "정렬"},
     # Tab names
     "tab.dashboard": {"en": "Dashboard", "ko": "대시보드"},
     "tab.projects": {"en": "Projects", "ko": "프로젝트"},
     "tab.file_history": {"en": "File History", "ko": "파일 히스토리"},
-    "tab.orphaned": {"en": "Orphaned", "ko": "고아 데이터"},
     "tab.debug_todos": {"en": "Debug/Todos", "ko": "디버그/Todos"},
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
-    "tab.codex_sessions": {"en": "Codex Sessions", "ko": "Codex 세션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
     # Codex sessions
-    "codex.info": {
-        "en": "Codex sessions grouped by working directory. Showing the {limit} most recent of {total}.",
-        "ko": "작업 디렉토리별 Codex 세션. 최근 {limit}개 표시 (전체 {total}개).",
-    },
-    "codex.filter_placeholder": {"en": "Filter by path…", "ko": "경로로 필터…"},
-    "codex.select_hint": {"en": "[dim]Select a session to preview its conversation[/]", "ko": "[dim]세션을 선택하면 대화를 미리봅니다[/]"},
-    "codex.btn_trash_session": {"en": "Trash Session [d]", "ko": "세션 삭제 [d]"},
-    "codex.confirm_trash": {
-        "en": "Trash this Codex session?\n\n{sid}\n[dim]Moved to trash, recoverable[/]",
-        "ko": "이 Codex 세션을 삭제할까요?\n\n{sid}\n[dim]휴지통으로 이동, 복구 가능[/]",
-    },
-    "codex.trashed": {"en": "Session trashed: {sid}", "ko": "세션 삭제됨: {sid}"},
-    "codex.unavailable": {"en": "[dim]No Codex data found at ~/.codex/sessions[/]", "ko": "[dim]~/.codex/sessions 에 Codex 데이터가 없습니다[/]"},
     # Confirm dialog
     "confirm.yes": {"en": "Confirm (y)", "ko": "확인 (y)"},
     "confirm.no": {"en": "Cancel (n)", "ko": "취소 (n)"},
@@ -194,51 +175,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "ko": "Orphaned 파일 히스토리를 모두 삭제?\n\n{count}개.\n[dim]휴지통으로 이동, 복구 가능[/]",
     },
     # ── Orphaned ──
-    "orph.info": {
-        "en": (
-            "[bold]Orphaned[/] - Leftover data with no matching project in .claude.json\n"
-            "[dim]Data remaining after projects were deleted/moved.\n"
-            "[bold]Select an item[/] then press the button. Moved to trash, recoverable.[/]"
-        ),
-        "ko": (
-            "[bold]Orphaned[/] - .claude.json에 매칭 프로젝트가 없는 잔여 데이터\n"
-            "[dim]프로젝트를 삭제/이동한 뒤 남은 데이터입니다.\n"
-            "[bold]삭제는 개별 항목 선택 후[/] 버튼을 눌러주세요. 휴지통으로 이동되며 복구 가능합니다.[/]"
-        ),
-    },
-    "orph.select_first": {"en": "Select an item first", "ko": "삭제할 항목을 선택하세요"},
-    "orph.session_header": {
-        "en": "[bold yellow]Orphaned Session Dirs[/]  [dim](project dirs not in .claude.json, each may contain multiple sessions)[/]",
-        "ko": "[bold yellow]Orphaned Session Dirs[/]  [dim](.claude.json에 없는 프로젝트 디렉토리, 각 디렉토리에 여러 세션 포함)[/]",
-    },
-    "orph.fh_header": {
-        "en": "[bold yellow]Orphaned File History[/]  [dim](file history without matching project)[/]",
-        "ko": "[bold yellow]Orphaned File History[/]  [dim](프로젝트 없는 파일 버전 히스토리)[/]",
-    },
-    "orph.debug_header": {
-        "en": "[bold yellow]Orphaned Debug[/]  [dim](debug logs without session)[/]",
-        "ko": "[bold yellow]Orphaned Debug[/]  [dim](세션 없는 디버그 로그)[/]",
-    },
-    "orph.todo_header": {
-        "en": "[bold yellow]Orphaned Todos[/]  [dim](todo memos without session)[/]",
-        "ko": "[bold yellow]Orphaned Todos[/]  [dim](세션 없는 할일 메모)[/]",
-    },
-    "orph.confirm_session": {
-        "en": "Move this project directory to trash?\n\nPath: {path}\nFiles: {count}\n\n[bold yellow]All sessions in this directory will be deleted![/]\n[dim]Moved to trash, recoverable[/]",
-        "ko": "이 프로젝트 디렉토리를 휴지통으로 이동?\n\nPath: {path}\n포함된 파일: {count}개\n\n[bold yellow]이 디렉토리의 모든 세션이 삭제됩니다![/]\n[dim]휴지통으로 이동되며 복구 가능합니다[/]",
-    },
-    "orph.confirm_fh": {
-        "en": "Move file history to trash?\n\nDir: {name}\n[dim]Moved to trash, recoverable[/]",
-        "ko": "File history를 휴지통으로 이동?\n\nDir: {name}\n[dim]휴지통으로 이동되며 복구 가능합니다[/]",
-    },
-    "orph.confirm_debug": {
-        "en": "Move debug file to trash?\n\nFile: {name}\n[dim]Moved to trash, recoverable[/]",
-        "ko": "Debug file을 휴지통으로 이동?\n\nFile: {name}\n[dim]휴지통으로 이동되며 복구 가능합니다[/]",
-    },
-    "orph.confirm_todo": {
-        "en": "Move todo file to trash?\n\nFile: {name}\n[dim]Moved to trash, recoverable[/]",
-        "ko": "Todo file을 휴지통으로 이동?\n\nFile: {name}\n[dim]휴지통으로 이동되며 복구 가능합니다[/]",
-    },
     # ── Debug/Todos ──
     "dt.info": {
         "en": (
@@ -320,8 +256,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "mig.target_title": {"en": "[bold green]Target[/] (destination)", "ko": "[bold green]Target[/] (복사할 대상)"},
     "mig.not_selected": {"en": "[dim]Not selected[/]", "ko": "[dim]선택되지 않음[/]"},
-    "mig.append": {"en": "Append (keep existing, skip duplicates)", "ko": "Append (기존 유지, 중복 스킵)"},
-    "mig.overwrite": {"en": "Overwrite (delete existing, overwrite)", "ko": "Overwrite (기존 삭제 후 덮어쓰기)"},
     "mig.select_source": {"en": "Select source project on the left", "ko": "왼쪽에서 소스 프로젝트를 선택하세요"},
     "mig.select_target": {"en": "Select target project on the right", "ko": "오른쪽에서 대상 프로젝트를 선택하세요"},
     "mig.same_error": {"en": "Source and target are the same", "ko": "소스와 대상이 같습니다"},
@@ -469,7 +403,11 @@ def t(key: str, **kwargs) -> str:
         return key
     text = entry.get(_current_lang, entry.get("en", key))
     if kwargs:
-        text = text.format(**kwargs)
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, IndexError, ValueError):
+            # Missing/typo'd placeholder shouldn't crash the UI — return raw text.
+            pass
     return text
 
 

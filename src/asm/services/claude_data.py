@@ -46,13 +46,14 @@ def _dir_size(path: Path) -> int:
     """Calculate total size of a directory.
 
     Uses ``du -sb`` on Linux for speed, falls back to pure-Python walk
-    on Windows / macOS / when the command fails.
+    on Windows / macOS / when the command fails. (macOS ``du`` has no ``-b``,
+    so it's excluded to avoid a failing subprocess per directory.)
     """
-    if sys.platform != "win32":
+    if sys.platform == "linux":
         import subprocess
         try:
             result = subprocess.run(
-                ["du", "-sb", str(path)],
+                ["du", "-sb", "--", str(path)],
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0:
@@ -479,13 +480,21 @@ def get_todos() -> list[TodoEntry]:
     return result
 
 
+_active_ids_cache: set[str] | None = None
+
+
 def _get_active_session_ids() -> set[str]:
     """Get set of all active session IDs from project directories.
 
     Uses a recursive walk so nested (e.g. subagent) session files are also
-    counted — otherwise their task/file-history entries look orphaned.
+    counted — otherwise their task/file-history entries look orphaned. Cached
+    because file-history/debug/todos getters each call this on every refresh;
+    cleared by refresh_usage_cache().
     """
-    ids = set()
+    global _active_ids_cache
+    if _active_ids_cache is not None:
+        return _active_ids_cache
+    ids: set[str] = set()
     if PROJECTS_DIR.exists():
         try:
             for d in PROJECTS_DIR.iterdir():
@@ -494,6 +503,7 @@ def _get_active_session_ids() -> set[str]:
                         ids.add(jsonl.stem)
         except (PermissionError, OSError):
             pass
+    _active_ids_cache = ids
     return ids
 
 
@@ -519,7 +529,6 @@ def get_stats() -> Stats:
     Computes shared data once to avoid redundant file parsing.
     """
     projects = get_projects()
-    project_paths = {p.path for p in projects}
     sessions = get_sessions()
 
     # Compute active session IDs once for orphan detection
@@ -592,9 +601,10 @@ _usage_scan_cache: dict[str, dict] | None = None
 
 
 def refresh_usage_cache() -> None:
-    """Drop the cached token-usage scan (call when the user refreshes)."""
-    global _usage_scan_cache
+    """Drop cached scans (token-usage + active-session-ids); call on refresh."""
+    global _usage_scan_cache, _active_ids_cache
     _usage_scan_cache = None
+    _active_ids_cache = None
 
 
 def _collect_msg_usage() -> dict[str, dict]:
@@ -630,7 +640,10 @@ def _collect_msg_usage() -> dict[str, dict]:
                                     continue
                                 if not is_billable(model):
                                     continue
-                                msg_last[msg_id] = {"usage": usage, "model": model, "ts_str": ts_str}
+                                msg_last[msg_id] = {
+                                    "usage": usage, "model": model,
+                                    "ts_str": ts_str, "project_dir": d.name,
+                                }
                             except (json.JSONDecodeError, KeyError):
                                 continue
                 except OSError:
@@ -641,6 +654,11 @@ def _collect_msg_usage() -> dict[str, dict]:
 
 def _period_key(dt, period: str) -> str:
     from datetime import timedelta
+    # Bucket by LOCAL date (timestamps are UTC). Otherwise KST etc. mis-attribute
+    # early-morning / late-night activity to the wrong day, and disagree with the
+    # history.jsonl day counts (which use local time).
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
     if period == "monthly":
         return dt.strftime("%Y-%m")
     if period == "weekly":
@@ -704,36 +722,49 @@ def get_all_period_usage() -> dict[str, list[dict]]:
 
 
 def get_usage_data() -> dict:
-    """Get usage/cost data from .claude.json and history.jsonl."""
+    """Get usage/cost data.
+
+    Cost / model / per-project totals are derived from the same full session
+    scan that feeds the period tables (so the dashboard headline and the tables
+    agree). Session-per-day counts come from history.jsonl.
+    """
     from collections import defaultdict
     from datetime import datetime
 
-    data = load_claude_json()
-    projects = data.get("projects", {})
+    from asm.services.pricing import calc_cost as _calc_cost
 
-    # Per-project costs
-    project_costs = []
+    data = load_claude_json()
+    encoded_to_paths = _build_encoded_to_paths_map()
+
+    # Aggregate the deduplicated usage scan by project and by model.
+    proj_agg: dict[str, float] = defaultdict(float)
     model_totals: dict[str, dict] = {}
     total_cost = 0.0
-
-    for path_str, config in projects.items():
-        cost = config.get("lastCost") or 0
+    for info in _collect_msg_usage().values():
+        usage = info["usage"]
+        model = info["model"]
+        cost = _calc_cost(usage, model)
         total_cost += cost
-        if cost > 0:
-            project_costs.append({
-                "path": path_str,
-                "name": Path(path_str).name or path_str,
-                "cost": cost,
-                "duration": config.get("lastDuration") or 0,
-            })
-        # Model usage aggregation
-        usage = config.get("lastModelUsage", {})
-        for model, stats in usage.items():
-            if model not in model_totals:
-                model_totals[model] = {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0}
-            for k in model_totals[model]:
-                model_totals[model][k] += stats.get(k, 0)
+        proj_agg[info.get("project_dir", "")] += cost
+        mt = model_totals.setdefault(
+            model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0}
+        )
+        mt["inputTokens"] += usage.get("input_tokens", 0)
+        mt["outputTokens"] += usage.get("output_tokens", 0)
+        mt["cacheReadInputTokens"] += usage.get("cache_read_input_tokens", 0)
+        mt["costUSD"] += cost
 
+    project_costs = []
+    for dir_name, cost in proj_agg.items():
+        if cost <= 0:
+            continue
+        label = _project_label_for_dir(dir_name, encoded_to_paths)
+        project_costs.append({
+            "path": label,
+            "name": Path(label).name or label,
+            "cost": cost,
+            "duration": 0,
+        })
     project_costs.sort(key=lambda x: x["cost"], reverse=True)
 
     # Daily sessions from history.jsonl
