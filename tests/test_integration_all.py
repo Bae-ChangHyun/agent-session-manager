@@ -179,6 +179,18 @@ class TestCodexFeatures:
         outside.write_text("{}")
         assert cleaner.trash_codex_session(str(outside)) is False
 
+    def test_move_codex_session_rewrites_cwd(self, monkeypatch, tmp_path):
+        env = _setup_fake_codex(monkeypatch, tmp_path)
+        ses = codex_data.get_project_sessions("/work/proj-a")
+        rollout = ses[0].project_dir
+        assert codex_data.move_session(rollout, "/work/proj-b") is True
+        codex_data.refresh()
+        # The session now belongs to proj-b.
+        a = codex_data.get_project_sessions("/work/proj-a")
+        b = codex_data.get_project_sessions("/work/proj-b")
+        assert all(s.session_id != "aaaa" for s in a)
+        assert any(s.session_id == "aaaa" for s in b)
+
     def test_codex_backup_restore_roundtrip(self, monkeypatch, tmp_path):
         env = _setup_fake_codex(monkeypatch, tmp_path)
         path = backup_service.create_codex_backup()
