@@ -35,7 +35,7 @@ wheels = [
 
 [[package]]
 name = "cc-session-utils"
-version = "0.5.1"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
