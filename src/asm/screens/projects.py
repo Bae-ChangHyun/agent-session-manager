@@ -546,6 +546,8 @@ class ProjectsPane(Container):
             content = m["content"]
             if m["type"] == "user":
                 lines.append(f"[bold green]User:[/]\n{escape(content)}\n")
+            elif m["type"] == "meta":
+                lines.append(f"[dim]{escape(content)}[/]")
             else:
                 if len(content) > 500:
                     content = content[:500] + "..."
