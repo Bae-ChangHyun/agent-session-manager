@@ -28,6 +28,7 @@ from cc_tui.models import (
     FILE_HISTORY_DIR,
     PROJECTS_DIR,
     SESSION_ENV_DIR,
+    TASKS_DIR,
     TODOS_DIR,
     DebugEntry,
     FileHistoryEntry,
@@ -135,12 +136,22 @@ def _build_encoded_to_paths_map() -> dict[str, list[str]]:
 
 
 def _resolve_project_dir(project_ref: str | None) -> Path | None:
-    """Resolve a project path or already-encoded directory name to a projects dir."""
+    """Resolve a project path or already-encoded directory name to a projects dir.
+
+    ``project_ref`` may be either an absolute project path (from .claude.json) or
+    an already-encoded directory name (e.g. ``-home-bch-foo``). Note that
+    ``PROJECTS_DIR / "/abs/path"`` collapses to ``/abs/path`` in pathlib (an
+    absolute right-hand operand discards the left), so we must encode an absolute
+    path *before* joining — otherwise it resolves to the real project source dir,
+    which has no session files.
+    """
     if not project_ref:
         return None
-    direct = PROJECTS_DIR / project_ref
-    if direct.exists():
-        return direct
+    # Already-encoded directory name (relative, no leading slash).
+    if not project_ref.startswith("/"):
+        direct = PROJECTS_DIR / project_ref
+        if direct.exists() and direct.parent == PROJECTS_DIR:
+            return direct
     encoded = encode_path(project_ref)
     candidate = PROJECTS_DIR / encoded
     if candidate.exists():
@@ -411,15 +422,33 @@ def get_debug_files() -> list[DebugEntry]:
 
 
 def get_todos() -> list[TodoEntry]:
-    """Get todo file entries."""
-    if not TODOS_DIR.exists():
-        return []
+    """Get per-session todo/task entries.
+
+    Claude Code >= 2.1 stores task lists under ``tasks/<sessionId>/<n>.json``
+    (one directory per session). Older versions used flat ``todos/*.json`` files.
+    Each session directory (or legacy file) becomes one entry.
+    """
     active_session_ids = _get_active_session_ids()
     result = []
+    if TASKS_DIR.exists():
+        try:
+            for d in sorted(TASKS_DIR.iterdir()):
+                if not d.is_dir():
+                    continue
+                session_id = d.name
+                is_orphaned = session_id not in active_session_ids if active_session_ids else False
+                result.append(
+                    TodoEntry(name=session_id, path=str(d), size_bytes=_dir_size(d), is_orphaned=is_orphaned)
+                )
+        except (PermissionError, OSError):
+            pass
+        return result
+    # Legacy fallback: flat todos/<sessionId>-agent-<id>.json files.
+    if not TODOS_DIR.exists():
+        return []
     try:
         for f in sorted(TODOS_DIR.iterdir()):
             size = f.stat().st_size if f.is_file() else _dir_size(f)
-            # Todo filenames: {UUID}-agent-{UUID}.json → extract first UUID
             session_id = f.stem.split("-agent-")[0] if "-agent-" in f.stem else f.stem
             is_orphaned = session_id not in active_session_ids if active_session_ids else False
             result.append(
@@ -431,13 +460,17 @@ def get_todos() -> list[TodoEntry]:
 
 
 def _get_active_session_ids() -> set[str]:
-    """Get set of all active session IDs from project directories."""
+    """Get set of all active session IDs from project directories.
+
+    Uses a recursive walk so nested (e.g. subagent) session files are also
+    counted — otherwise their task/file-history entries look orphaned.
+    """
     ids = set()
     if PROJECTS_DIR.exists():
         try:
             for d in PROJECTS_DIR.iterdir():
                 if d.is_dir():
-                    for jsonl in d.glob("*.jsonl"):
+                    for jsonl in d.rglob("*.jsonl"):
                         ids.add(jsonl.stem)
         except (PermissionError, OSError):
             pass
@@ -495,9 +528,19 @@ def get_stats() -> Stats:
         except (PermissionError, OSError):
             pass
 
-    # Count todo files
+    # Count todo/task entries (tasks/<sessionId>/ dirs, or legacy todos/ files)
     td_total, td_orphaned = 0, 0
-    if TODOS_DIR.exists():
+    if TASKS_DIR.exists():
+        try:
+            for d in TASKS_DIR.iterdir():
+                if not d.is_dir():
+                    continue
+                td_total += 1
+                if d.name not in active_ids:
+                    td_orphaned += 1
+        except (PermissionError, OSError):
+            pass
+    elif TODOS_DIR.exists():
         try:
             for f in TODOS_DIR.iterdir():
                 td_total += 1
@@ -531,36 +574,8 @@ def get_period_usage(period: str = "daily") -> list[dict]:
     from collections import defaultdict
     from datetime import datetime, timedelta
 
-    # Per-1M-token rates (USD).  Opus 4.5/4.6 is 3x cheaper than 4.0/4.1.
-    model_cost_rates = {
-        "input":        {"opus": 15, "opus45": 5,  "sonnet": 3,  "haiku": 1},
-        "output":       {"opus": 75, "opus45": 25, "sonnet": 15, "haiku": 5},
-        "cache_read":   {"opus": 1.5, "opus45": 0.50, "sonnet": 0.30, "haiku": 0.10},
-        "cache_create": {"opus": 18.75, "opus45": 6.25, "sonnet": 3.75, "haiku": 1.25},
-    }
-
-    def _model_tier(model_name: str) -> str:
-        if "opus" in model_name:
-            # opus-4-5, opus-4-6 → new pricing; opus-4-0, opus-4-1 → old pricing
-            if "opus-4-5" in model_name or "opus-4-6" in model_name:
-                return "opus45"
-            return "opus"
-        if "haiku" in model_name:
-            return "haiku"
-        return "sonnet"
-
-    def _calc_cost(usage: dict, tier: str) -> float:
-        rates = model_cost_rates
-        inp = usage.get("input_tokens", 0)
-        out = usage.get("output_tokens", 0)
-        cache_read = usage.get("cache_read_input_tokens", 0)
-        cache_create = usage.get("cache_creation_input_tokens", 0)
-        return (
-            inp * rates["input"][tier] / 1_000_000
-            + out * rates["output"][tier] / 1_000_000
-            + cache_read * rates["cache_read"][tier] / 1_000_000
-            + cache_create * rates["cache_create"][tier] / 1_000_000
-        )
+    from cc_tui.services.pricing import calc_cost as _calc_cost
+    from cc_tui.services.pricing import is_billable
 
     def _period_key(dt: datetime) -> str:
         if period == "monthly":
@@ -603,6 +618,8 @@ def get_period_usage(period: str = "daily") -> list[dict]:
                             msg_id = m.get("id", "")
                             if not usage or not ts_str or not msg_id:
                                 continue
+                            if not is_billable(model):
+                                continue
                             # Keep last entry per message id (final streaming event)
                             msg_last[msg_id] = {
                                 "usage": usage,
@@ -624,14 +641,13 @@ def get_period_usage(period: str = "daily") -> list[dict]:
         except ValueError:
             continue
         pk = _period_key(dt)
-        tier = _model_tier(model)
         short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
         entry = agg[pk][short_model]
         entry["input_tokens"] += usage.get("input_tokens", 0)
         entry["output_tokens"] += usage.get("output_tokens", 0)
         entry["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0)
         entry["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0)
-        entry["cost"] += _calc_cost(usage, tier)
+        entry["cost"] += _calc_cost(usage, model)
         entry["messages"] += 1
 
     # Convert to sorted list
@@ -718,53 +734,122 @@ def get_usage_data() -> dict:
 
 
 def get_project_sessions(project_path: str) -> list[SessionDetail]:
-    """Get sessions specifically for one project."""
+    """Get sessions for one project.
+
+    Claude Code >= 2.1 maintains a ``sessions-index.json`` per project dir with
+    rich metadata (summary, firstPrompt, git branch, mtime). We prefer it and
+    fall back to parsing the JSONL files directly for older layouts.
+    """
     project_dir = _resolve_project_dir(project_path)
     if not project_dir:
         return []
     encoded = project_dir.name
 
+    # The actual .jsonl files are the source of truth (those are viewable);
+    # sessions-index.json only enriches them with summary/branch metadata.
+    index = _load_session_index(project_dir)
+
     result = []
-    for jsonl in sorted(project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True):
+    for jsonl in project_dir.glob("*.jsonl"):
         try:
             stat = jsonl.stat()
-            first_prompt = ""
-            session_id = jsonl.stem
-            with open(jsonl) as f:
-                for line in f:
-                    try:
-                        msg = json.loads(line)
-                        if msg.get("type") == "user" and not msg.get("isMeta"):
-                            content = msg.get("message", {}).get("content", "")
-                            if isinstance(content, str):
-                                # Skip XML/command messages
-                                if not content.startswith("<"):
-                                    first_prompt = content[:120]
-                                    break
-                            elif isinstance(content, list):
-                                for block in content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        text = block.get("text", "")
-                                        if not text.startswith("<"):
-                                            first_prompt = text[:120]
-                                            break
-                                if first_prompt:
-                                    break
-                    except json.JSONDecodeError:
-                        continue
-            result.append(
-                SessionDetail(
-                    session_id=session_id,
-                    summary=first_prompt or f"(session {session_id[:8]})",
-                    last_modified=stat.st_mtime,
-                    file_size=stat.st_size,
-                    first_prompt=first_prompt,
-                    project_dir=encoded,
-                )
-            )
         except OSError:
             continue
+        session_id = jsonl.stem
+        meta = index.get(session_id)
+        if meta:
+            summary = meta.get("summary") or meta.get("firstPrompt") or f"(session {session_id[:8]})"
+            first_prompt = (meta.get("firstPrompt") or "")[:120]
+            git_branch = meta.get("gitBranch", "") or ""
+        else:
+            first_prompt, ai_title = _scan_jsonl_summary(jsonl)
+            summary = ai_title or first_prompt or f"(session {session_id[:8]})"
+            git_branch = ""
+        result.append(
+            SessionDetail(
+                session_id=session_id,
+                summary=summary[:120],
+                last_modified=stat.st_mtime,
+                file_size=stat.st_size,
+                first_prompt=first_prompt,
+                git_branch=git_branch,
+                project_dir=encoded,
+            )
+        )
+    result.sort(key=lambda s: s.last_modified, reverse=True)
     return result
+
+
+def _load_session_index(project_dir: Path) -> dict[str, dict]:
+    """Load sessions-index.json into a {sessionId: entry} map (empty if absent)."""
+    index_path = project_dir / "sessions-index.json"
+    if not index_path.exists():
+        return {}
+    try:
+        entries = json.loads(index_path.read_text()).get("entries", [])
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {
+        e["sessionId"]: e
+        for e in entries
+        if isinstance(e, dict) and e.get("sessionId")
+    }
+
+
+def _scan_jsonl_summary(jsonl: Path) -> tuple[str, str]:
+    """Return (first_prompt, ai_title) by scanning a session JSONL file."""
+    first_prompt = ""
+    ai_title = ""
+    try:
+        with open(jsonl) as f:
+            for line in f:
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                mtype = msg.get("type")
+                if mtype == "ai-title" and not ai_title:
+                    ai_title = (msg.get("aiTitle") or "")[:120]
+                elif mtype == "user" and not msg.get("isMeta") and not first_prompt:
+                    content = msg.get("message", {}).get("content", "")
+                    if isinstance(content, str):
+                        if content and not content.startswith("<"):
+                            first_prompt = content[:120]
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text = block.get("text", "")
+                                if text and not text.startswith("<"):
+                                    first_prompt = text[:120]
+                                    break
+                if ai_title and first_prompt:
+                    break
+    except OSError:
+        pass
+    return first_prompt, ai_title
+
+
+def find_duplicate_sessions() -> dict[str, list[str]]:
+    """Find session ids that appear in more than one project directory.
+
+    Returns ``{session_id: [project_dir_name, ...]}`` for ids present in 2+ dirs
+    (e.g. left over from session migration/copy). Only the top level of each
+    project dir is scanned.
+    """
+    from collections import defaultdict
+
+    id_to_dirs: dict[str, list[str]] = defaultdict(list)
+    if not PROJECTS_DIR.exists():
+        return {}
+    try:
+        for d in PROJECTS_DIR.iterdir():
+            if not d.is_dir():
+                continue
+            for jsonl in d.glob("*.jsonl"):
+                id_to_dirs[jsonl.stem].append(d.name)
+    except (PermissionError, OSError):
+        pass
+    return {sid: dirs for sid, dirs in id_to_dirs.items() if len(dirs) > 1}
 
 
 def remove_project_from_json(project_path: str) -> bool:

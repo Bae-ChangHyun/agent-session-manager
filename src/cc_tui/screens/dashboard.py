@@ -8,7 +8,6 @@ from textual.containers import Container, VerticalScroll
 from textual.widgets import DataTable, Static, TabPane, TabbedContent
 
 from cc_tui.i18n import t
-from cc_tui.services.claude_data import get_period_usage, get_stats, get_usage_data
 from cc_tui.utils import format_bytes
 
 
@@ -111,14 +110,19 @@ class DashboardPane(Container):
         self._cached_periods = {}
         self.run_worker(self._load, thread=True)
 
+    def _data_module(self):
+        from cc_tui.services.sources import data_module
+        return data_module(self.app.source)
+
     def _load(self) -> None:
-        stats = get_stats()
-        usage = get_usage_data()
-        daily = get_period_usage("daily")
+        mod = self._data_module()
+        stats = mod.get_stats()
+        usage = mod.get_usage_data()
+        daily = mod.get_period_usage("daily")
         self.app.call_from_thread(self._on_data_loaded, stats, usage, {"daily": daily})
         # Load weekly/monthly in background
         for key in ("weekly", "monthly"):
-            data = get_period_usage(key)
+            data = mod.get_period_usage(key)
             self.app.call_from_thread(self._on_bg_period_loaded, key, data)
 
     def _on_data_loaded(self, stats, usage, periods=None) -> None:
@@ -143,7 +147,12 @@ class DashboardPane(Container):
         if not stats or not usage:
             return
 
-        title = f"[bold]CC-TUI[/]  [dim]Filter:[/] {self.app.target_path}" if self.app.target_path else "[bold]CC-TUI[/]  Claude Code Session Manager"
+        source_label = "Codex" if self.app.is_codex else "Claude Code"
+        title = (
+            f"[bold]CC-TUI[/]  [dim]Filter:[/] {self.app.target_path}"
+            if self.app.target_path
+            else f"[bold]CC-TUI[/]  {source_label} Session Manager"
+        )
         self.query_one("#dash-header", Static).update(
             f"{title}\n"
             f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
@@ -259,7 +268,7 @@ class DashboardPane(Container):
         self.action_period(order[(idx - 1) % len(order)])
 
     def _load_period(self, key: str) -> None:
-        data = get_period_usage(key)
+        data = self._data_module().get_period_usage(key)
         self.app.call_from_thread(self._on_period_loaded, key, data)
 
     def _on_period_loaded(self, key: str, data: list) -> None:

@@ -20,7 +20,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.orphaned": {"en": "Orphaned", "ko": "고아 데이터"},
     "tab.debug_todos": {"en": "Debug/Todos", "ko": "디버그/Todos"},
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
+    "tab.sessions": {"en": "Sessions", "ko": "세션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
+    # Codex sessions
+    "codex.info": {
+        "en": "Codex sessions grouped by working directory. Showing the {limit} most recent of {total}.",
+        "ko": "작업 디렉토리별 Codex 세션. 최근 {limit}개 표시 (전체 {total}개).",
+    },
+    "codex.filter_placeholder": {"en": "Filter by path…", "ko": "경로로 필터…"},
+    "codex.select_hint": {"en": "[dim]Select a session to preview its conversation[/]", "ko": "[dim]세션을 선택하면 대화를 미리봅니다[/]"},
+    "codex.btn_trash_session": {"en": "Trash Session [d]", "ko": "세션 삭제 [d]"},
+    "codex.confirm_trash": {
+        "en": "Trash this Codex session?\n\n{sid}\n[dim]Moved to trash, recoverable[/]",
+        "ko": "이 Codex 세션을 삭제할까요?\n\n{sid}\n[dim]휴지통으로 이동, 복구 가능[/]",
+    },
+    "codex.trashed": {"en": "Session trashed: {sid}", "ko": "세션 삭제됨: {sid}"},
+    "codex.unavailable": {"en": "[dim]No Codex data found at ~/.codex/sessions[/]", "ko": "[dim]~/.codex/sessions 에 Codex 데이터가 없습니다[/]"},
     # Confirm dialog
     "confirm.yes": {"en": "Confirm (y)", "ko": "확인 (y)"},
     "confirm.no": {"en": "Cancel (n)", "ko": "취소 (n)"},
@@ -98,6 +113,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "proj.confirm_trash_orphaned": {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",
         "ko": "Orphaned 세션 디렉토리를 모두 삭제?\n\n매칭 프로젝트 없는 {count}개.\n[dim]휴지통으로 이동, 복구 가능[/]",
+    },
+    "proj.duplicates_title": {"en": "Duplicate Sessions", "ko": "중복 세션"},
+    "proj.copies": {"en": "copies", "ko": "곳"},
+    "proj.duplicate_session": {"en": "Duplicate session", "ko": "중복 세션"},
+    "proj.duplicate_hint": {
+        "en": "[dim]Same session id exists in multiple project dirs. Select a copy and press [b]d[/] to delete just that one.[/]",
+        "ko": "[dim]같은 세션 id가 여러 프로젝트 디렉토리에 존재합니다. 복사본을 선택하고 [b]d[/]를 눌러 해당 복사본만 삭제하세요.[/]",
     },
     # ── File History ── detail panel status descriptions
     "fh.status_orphaned_desc": {
@@ -314,6 +336,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "bak.btn_settings": {"en": "Settings", "ko": "Settings"},
     "bak.btn_plugins": {"en": "Plugins", "ko": "Plugins"},
     "bak.btn_sessions": {"en": "Sessions", "ko": "Sessions"},
+    "bak.btn_codex": {"en": "Backup Codex Sessions", "ko": "Codex 세션 백업"},
     "bak.btn_restore": {"en": "Restore", "ko": "복원"},
     "bak.btn_delete": {"en": "Delete", "ko": "삭제"},
     "bak.btn_export": {"en": "Export .tar.gz", "ko": "내보내기 .tar.gz"},
@@ -369,6 +392,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Create sessions backup?\n(projects/ directory - all session data)\nThis may take a moment.",
         "ko": "세션 백업을 생성하시겠습니까?\n(projects/ 디렉토리 - 전체 세션 데이터)\n시간이 다소 걸릴 수 있습니다.",
     },
+    "bak.confirm_codex": {
+        "en": "Create Codex sessions backup?\n(~/.codex/sessions + index/config, excludes caches)\nThis may take a moment.",
+        "ko": "Codex 세션 백업을 생성하시겠습니까?\n(~/.codex/sessions + 인덱스/설정, 캐시 제외)\n시간이 다소 걸릴 수 있습니다.",
+    },
     "bak.confirm_restore": {
         "en": "Restore backup '{name}'?\nCurrent data will be backed up first.",
         "ko": "백업 '{name}'을(를) 복원하시겠습니까?\n현재 데이터가 먼저 백업됩니다.",
@@ -395,6 +422,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "bak.plugins_created": {"en": "Plugins backup created: {path}", "ko": "Plugins 백업 생성: {path}"},
     "bak.sessions_creating": {"en": "Creating sessions backup...", "ko": "Sessions 백업 생성 중..."},
     "bak.sessions_created": {"en": "Sessions backup created: {path}", "ko": "Sessions 백업 생성: {path}"},
+    "bak.codex_creating": {"en": "Creating Codex backup...", "ko": "Codex 백업 생성 중..."},
+    "bak.codex_created": {"en": "Codex backup created: {path}", "ko": "Codex 백업 생성: {path}"},
     "bak.backup_failed": {"en": "Failed to create backup", "ko": "백업 생성 실패"},
     "bak.full_creating": {"en": "Creating full backup...", "ko": "전체 백업 생성 중..."},
     "bak.full_created": {"en": "Full backup created: {path}", "ko": "Full 백업 생성: {path}"},

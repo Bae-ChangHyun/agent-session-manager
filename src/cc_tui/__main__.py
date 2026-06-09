@@ -21,11 +21,18 @@ def main():
         choices=["en", "ko"],
         help="UI language (default: en, or set CC_TUI_LANG env var)",
     )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="claude",
+        choices=["claude", "codex"],
+        help="Data source: 'claude' (~/.claude) or 'codex' (~/.codex). Default: claude",
+    )
     args = parser.parse_args()
 
     init_lang(args.lang)
 
-    app = CCTuiApp(target_path=args.path)
+    app = CCTuiApp(target_path=args.path, source=args.source)
     app.run()
 
 

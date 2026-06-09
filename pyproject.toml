@@ -1,6 +1,6 @@
 [project]
 name = "cc-session-utils"
-version = "0.5.0"
+version = "0.6.0"
 description = "Terminal UI for managing Claude Code sessions, projects, and data"
 readme = "README.md"
 license = {text = "MIT"}

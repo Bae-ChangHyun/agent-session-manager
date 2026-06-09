@@ -44,6 +44,9 @@ def _setup_fake_claude(monkeypatch, tmp_path: Path) -> dict[str, Path | str]:
     debug_dir.mkdir()
     todos_dir = claude_dir / "todos"
     todos_dir.mkdir()
+    # New-style task dir (Claude Code >= 2.1). Left absent here so the legacy
+    # todos/ fallback path is exercised by this fixture.
+    tasks_dir = claude_dir / "tasks"
     plugins_dir = claude_dir / "plugins"
     plugins_dir.mkdir()
     skills_dir = claude_dir / "skills"
@@ -177,10 +180,12 @@ def _setup_fake_claude(monkeypatch, tmp_path: Path) -> dict[str, Path | str]:
     monkeypatch.setattr(claude_data, "FILE_HISTORY_DIR", file_history_dir)
     monkeypatch.setattr(claude_data, "DEBUG_DIR", debug_dir)
     monkeypatch.setattr(claude_data, "TODOS_DIR", todos_dir)
+    monkeypatch.setattr(claude_data, "TASKS_DIR", tasks_dir)
     monkeypatch.setattr(cleaner, "SESSION_ENV_DIR", session_env_dir)
     monkeypatch.setattr(cleaner, "FILE_HISTORY_DIR", file_history_dir)
     monkeypatch.setattr(cleaner, "DEBUG_DIR", debug_dir)
     monkeypatch.setattr(cleaner, "TODOS_DIR", todos_dir)
+    monkeypatch.setattr(cleaner, "TASKS_DIR", tasks_dir)
     monkeypatch.setattr(cleaner, "_ALLOWED_ROOTS", (claude_dir,))
     monkeypatch.setattr(backup_service, "PLUGINS_DIR", plugins_dir)
     monkeypatch.setattr(backup_service, "SKILLS_DIR", skills_dir)
@@ -194,7 +199,6 @@ def _setup_fake_claude(monkeypatch, tmp_path: Path) -> dict[str, Path | str]:
     monkeypatch.setattr(migrate, "PROJECTS_DIR", projects_dir)
     monkeypatch.setattr(projects_screen, "PROJECTS_DIR", projects_dir)
     monkeypatch.setattr(debug_todos_screen, "DEBUG_DIR", debug_dir)
-    monkeypatch.setattr(debug_todos_screen, "TODOS_DIR", todos_dir)
     monkeypatch.setattr(migrate_screen, "PROJECTS_DIR", projects_dir)
     monkeypatch.setattr(migrate, "send2trash", _fake_send2trash)
     monkeypatch.setattr(cleaner, "send2trash", _fake_send2trash)
