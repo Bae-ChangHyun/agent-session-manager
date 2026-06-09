@@ -379,12 +379,14 @@ class DashboardPane(Container):
         return self.query_one(f"#period-table-{key}", DataTable)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """Handle period changes from the nested tabbed content."""
+        """Switch the displayed period when its sub-tab is clicked."""
         if event.tabbed_content.id != "period-tabs":
             return
-        tab_id = event.tab.id or ""
-        if tab_id.startswith("period-"):
-            period = tab_id.replace("period-", "", 1)
+        # Use the active *pane* id ("period-weekly"); event.tab.id is prefixed
+        # with "--content-tab-" so matching on it never worked.
+        active = event.tabbed_content.active or ""
+        if active.startswith("period-"):
+            period = active.replace("period-", "", 1)
             if period != self._period:
                 self.action_period(period)
 

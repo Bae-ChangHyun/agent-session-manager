@@ -241,3 +241,46 @@ class TestUIBothModes:
                 assert {"/work/proj-a", "/work/proj-b"} <= paths
 
         asyncio.run(run())
+
+
+class TestDashboardPeriodAndEditor:
+    def test_period_tab_click_switches(self, monkeypatch, tmp_path):
+        """Clicking the Weekly/Monthly sub-tabs must switch the displayed period."""
+        _setup_fake_claude(monkeypatch, tmp_path)
+
+        async def run():
+            app = CCTuiApp()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause(); await asyncio.sleep(1.0); await pilot.pause()
+                d = app.query_one("DashboardPane")
+                for label, expected in (("Weekly", "weekly"), ("Monthly", "monthly")):
+                    for tb in app.query("#period-tabs Tab"):
+                        if label in str(tb.label):
+                            await pilot.click(tb)
+                            break
+                    await pilot.pause(); await asyncio.sleep(0.3); await pilot.pause()
+                    assert d._period == expected
+
+        asyncio.run(run())
+
+    def test_instruction_file_editor_saves(self, tmp_path):
+        from asm.screens.file_editor import FileEditorScreen
+        from textual.widgets import TextArea
+
+        target = tmp_path / "CLAUDE.md"
+
+        async def run():
+            app = CCTuiApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                saved = []
+                app.push_screen(FileEditorScreen(target), callback=lambda s: saved.append(s))
+                await pilot.pause(); await asyncio.sleep(0.3); await pilot.pause()
+                app.screen.query_one("#editor-area", TextArea).text = "# rules\n- concise"
+                await pilot.pause()
+                app.screen.action_save()
+                await pilot.pause(); await asyncio.sleep(0.2); await pilot.pause()
+                assert target.read_text().startswith("# rules")
+                assert saved == [True]
+
+        asyncio.run(run())

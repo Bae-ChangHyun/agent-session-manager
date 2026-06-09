@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -13,6 +13,10 @@ from rich.markup import escape
 
 from asm.models import PROJECTS_DIR, ProjectInfo, decode_path_hint, encode_path
 from asm.screens.confirm import ConfirmScreen
+from asm.screens.file_editor import FileEditorScreen
+
+# Per-project instruction files that can be viewed/edited from the detail panel.
+INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.local.md")
 from asm.services.backup import create_config_backup
 from asm.services.claude_data import (
     find_duplicate_sessions,
@@ -248,11 +252,30 @@ class ProjectsPane(Container):
             actions.append(("trash-orphaned-sessions", t("proj.btn_trash_orphaned", count=count), "#ba3c5b"))
         bar.set_actions(actions, on_action=self._handle_action)
 
-    def _render_detail_actions(self, show_trash_session=False, show_remove_config=False) -> None:
+    def _refresh_detail_actions(self) -> None:
+        """Re-render detail actions for the selected project (e.g. after a save)."""
+        path = getattr(self, "_selected_project_path", None)
+        if path:
+            encoded = encode_path(path)
+            sd = PROJECTS_DIR / encoded
+            session_count = len(list(sd.glob("*.jsonl"))) if sd.exists() else 0
+            self._render_detail_actions(
+                show_remove_config=(session_count == 0),
+                instr_path=path if Path(path).is_dir() else None,
+            )
+
+    def _render_detail_actions(self, show_trash_session=False, show_remove_config=False, instr_path=None) -> None:
         """Render detail panel action bar."""
         actions = []
         if show_trash_session:
             actions.append(("trash-session", t("proj.btn_trash_session"), "#e8890c"))
+        # Per-project instruction files (edit existing, "+" to create).
+        if instr_path:
+            for fname in INSTRUCTION_FILES:
+                exists = (Path(instr_path) / fname).exists()
+                label = fname if exists else f"+ {fname}"
+                color = "#0178d4" if exists else "#555555"
+                actions.append((f"edit::{fname}", label, color))
         if show_remove_config:
             actions.append(("remove-config", t("proj.btn_remove_config"), "#ba3c5b"))
         bar = self.query_one("#detail-actions", ActionBar)
@@ -401,6 +424,7 @@ class ProjectsPane(Container):
             self._render_detail_actions(
                 show_trash_session=False,
                 show_remove_config=(session_count == 0),
+                instr_path=path if Path(path).is_dir() else None,
             )
             p = self._project_map.get(path)
             if p:
@@ -457,6 +481,14 @@ class ProjectsPane(Container):
             f"[bold]Status:[/] {status}\n"
             f"[bold]Sessions:[/] {session_count}\n"
         )
+
+        # Instruction files (edit via the buttons below)
+        if Path(p.path).is_dir():
+            marks = []
+            for fname in INSTRUCTION_FILES:
+                present = (Path(p.path) / fname).exists()
+                marks.append(f"[green]✓[/] {fname}" if present else f"[dim]· {fname}[/]")
+            detail += "\n[bold]Instructions:[/]\n  " + "   ".join(marks) + "\n"
 
         # Config 내용 표시
         config_data = load_claude_json().get("projects", {}).get(p.path, {})
@@ -527,6 +559,16 @@ class ProjectsPane(Container):
         self._handle_action("remove-config")
 
     def _handle_action(self, action_id: str) -> None:
+        if action_id.startswith("edit::"):
+            fname = action_id.split("::", 1)[1]
+            path = getattr(self, "_selected_project_path", None)
+            if path:
+                target = Path(path) / fname
+                self.app.push_screen(
+                    FileEditorScreen(target),
+                    callback=lambda saved: self._refresh_detail_actions() if saved else None,
+                )
+            return
         if action_id == "sort-projects":
             self._sort_mode = {
                 "path": "cost",
