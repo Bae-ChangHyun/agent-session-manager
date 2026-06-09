@@ -239,7 +239,6 @@ class FileHistoryPane(Container):
             e = self._entries[event.row_key.value]
             body = self.query_one("#fh-detail-body", Static)
 
-            is_uuid = bool(_UUID_RE.match(e.dir_name))
             project = self._session_to_project.get(e.dir_name)
 
             if e.is_orphaned:

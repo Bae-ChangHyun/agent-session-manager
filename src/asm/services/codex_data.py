@@ -85,19 +85,6 @@ def _scanned_sessions(limit: int) -> list[dict]:
     return sessions
 
 
-def _read_meta(f: Path) -> dict | None:
-    """Read the session_meta payload (first line) of a rollout file."""
-    try:
-        with open(f) as fh:
-            first = fh.readline()
-        obj = json.loads(first)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if obj.get("type") == "session_meta":
-        return obj.get("payload", {})
-    return None
-
-
 def _scan_session(f: Path) -> dict | None:
     """Parse one rollout file into a summary dict.
 
@@ -169,19 +156,15 @@ def _extract_input_text(content) -> str:
 
 
 def get_projects(limit: int = SCAN_LIMIT) -> list[ProjectInfo]:
-    """Group recent Codex sessions by working directory into project entries."""
-    grouped: dict[str, int] = defaultdict(int)
-    for f in _rollout_files(limit):
-        meta = _read_meta(f)
-        if meta is None:
-            continue
-        cwd = meta.get("cwd", "") or "(unknown)"
-        grouped[cwd] += 1
-    result = []
-    for cwd, count in grouped.items():
-        result.append(
-            ProjectInfo(path=cwd, exists=Path(cwd).exists() if cwd != "(unknown)" else False)
-        )
+    """Group recent Codex sessions by working directory into project entries.
+
+    Reuses the shared (cached) session scan instead of re-reading file headers.
+    """
+    cwds = {info["cwd"] or "(unknown)" for info in _scanned_sessions(limit)}
+    result = [
+        ProjectInfo(path=cwd, exists=Path(cwd).exists() if cwd != "(unknown)" else False)
+        for cwd in cwds
+    ]
     result.sort(key=lambda p: p.path.casefold())
     return result
 
@@ -269,6 +252,8 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
     from datetime import timedelta
 
     def _period_key(dt: datetime) -> str:
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()  # bucket by local date, not UTC
         if period == "monthly":
             return dt.strftime("%Y-%m")
         if period == "weekly":
@@ -352,6 +337,15 @@ def move_session(rollout_path: str, new_cwd: str) -> bool:
 
     p = Path(rollout_path)
     if not p.exists():
+        return False
+    # Defense-in-depth: only operate on real files under the Codex sessions dir
+    # (parity with the sibling trash function), even though callers pass scanned
+    # rollouts. Uses the module-level dir so it follows test/patched roots.
+    try:
+        if p.is_symlink() or not p.resolve().is_relative_to(CODEX_SESSIONS_DIR.resolve()):
+            logger.warning("Refusing to move session outside Codex sessions dir: %s", rollout_path)
+            return False
+    except OSError:
         return False
     try:
         create_recovery_snapshot(p, "codex-session")

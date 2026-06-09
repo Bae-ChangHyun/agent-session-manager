@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import re
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +11,8 @@ from pathlib import Path
 from send2trash import send2trash
 
 from asm.models import PROJECTS_DIR, decode_path_hint, encode_path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -202,8 +204,8 @@ def _update_paths(
                     updated.append(line)
             if modified:
                 jsonl.write_text("\n".join(updated) + "\n")
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning("Path rewrite failed for %s: %s", jsonl.name, e)
 
     # sessions-index.json - parse as JSON, not string replace
     idx = target_dir / "sessions-index.json"
@@ -213,5 +215,5 @@ def _update_paths(
             _replace_in_obj(data, source_path, target_path, restrict_keys=False)
             _replace_in_obj(data, source_encoded, target_encoded, restrict_keys=False)
             idx.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("sessions-index.json rewrite failed in %s: %s", target_dir, e)

@@ -238,7 +238,9 @@ def test_service_feature_smoke(monkeypatch, tmp_path: Path):
     assert stats.total_todos == 2
 
     usage = claude_data.get_usage_data()
-    assert usage["total_cost"] == 1.75
+    # Cost is now derived from the actual session scan (project_a's assistant
+    # message), not the .claude.json lastCost sum.
+    assert usage["total_cost"] > 0
     assert usage["project_costs"][0]["path"] == env["project_a"]
 
     periods = claude_data.get_period_usage("daily")

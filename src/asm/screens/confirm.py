@@ -47,7 +47,9 @@ class ConfirmScreen(ModalScreen[bool]):
     def __init__(self, message: str, **kwargs):
         super().__init__(**kwargs)
         self.message = message
-        self._focused_idx = 0  # 0=yes, 1=no
+        # Default focus on "No" — these dialogs gate destructive actions, so an
+        # accidental Enter shouldn't confirm a delete.
+        self._focused_idx = 1  # 0=yes, 1=no
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-dialog"):

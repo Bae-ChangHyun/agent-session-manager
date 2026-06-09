@@ -44,9 +44,23 @@ def _validate_backup_path(path: Path) -> None:
 
 
 def _ensure_backup_dir() -> Path:
-    """Ensure backup directory exists."""
+    """Ensure backup directory exists (private — backups may hold OAuth tokens)."""
     BACKUP_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    # ~/.asm tree may contain ~/.claude.json (OAuth tokens) — keep it owner-only.
+    for d in (BACKUP_BASE_DIR.parent, BACKUP_BASE_DIR):
+        try:
+            d.chmod(0o700)
+        except OSError:
+            pass
     return BACKUP_BASE_DIR
+
+
+def _restrict(path: Path) -> None:
+    """Best-effort owner-only (0600) on a possibly-sensitive backup file."""
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _dir_size(path: Path) -> int:
@@ -79,6 +93,7 @@ def create_config_backup() -> str | None:
     dest = backup_dir / f".claude-{timestamp}.json"
     try:
         shutil.copy2(str(CLAUDE_JSON), str(dest))
+        _restrict(dest)  # contains OAuth tokens
         return str(dest)
     except OSError as e:
         logger.warning("Failed to create config backup: %s", e)
@@ -99,7 +114,9 @@ def create_full_backup() -> str | None:
                 ignore_dangling_symlinks=True,
             )
         if CLAUDE_JSON.exists():
-            shutil.copy2(str(CLAUDE_JSON), str(backup_dir / ".claude.json"))
+            json_dest = backup_dir / ".claude.json"
+            shutil.copy2(str(CLAUDE_JSON), str(json_dest))
+            _restrict(json_dest)  # contains OAuth tokens
         return str(backup_dir)
     except OSError as e:
         logger.warning("Failed to create full backup: %s", e)
@@ -347,7 +364,10 @@ def restore_full_backup(backup_path: str) -> bool:
             if CLAUDE_DIR.exists():
                 CLAUDE_DIR.rename(temp_dir)
             try:
-                shutil.copytree(str(claude_backup), str(CLAUDE_DIR), symlinks=False)
+                shutil.copytree(
+                    str(claude_backup), str(CLAUDE_DIR),
+                    symlinks=_SYMLINKS_ON, ignore_dangling_symlinks=True,
+                )
             except (OSError, shutil.Error):
                 # Rollback directory
                 if temp_dir.exists():
@@ -380,6 +400,34 @@ def restore_full_backup(backup_path: str) -> bool:
     except (OSError, ValueError) as e:
         logger.warning("Failed to restore full backup: %s", e)
         return False
+
+
+def _replace_dir_with_rollback(src_dir: Path, dest_dir: Path) -> None:
+    """Replace dest_dir with a copy of src_dir, rolling back on failure.
+
+    The live dir is renamed aside first; if the copy fails the original is
+    restored, so a mid-copy error never leaves the user with no data.
+    """
+    temp = dest_dir.with_name(dest_dir.name + ".restoring")
+    if temp.exists():
+        shutil.rmtree(str(temp))
+    moved = False
+    if dest_dir.exists():
+        dest_dir.rename(temp)
+        moved = True
+    try:
+        shutil.copytree(
+            str(src_dir), str(dest_dir),
+            symlinks=_SYMLINKS_ON, ignore_dangling_symlinks=True,
+        )
+    except (OSError, shutil.Error):
+        if moved:
+            if dest_dir.exists():
+                shutil.rmtree(str(dest_dir), ignore_errors=True)
+            temp.rename(dest_dir)
+        raise
+    if moved and temp.exists():
+        shutil.rmtree(str(temp), ignore_errors=True)
 
 
 def restore_settings_backup(backup_path: str) -> bool:
@@ -419,22 +467,10 @@ def restore_plugins_backup(backup_path: str) -> tuple[bool, list[str]]:
         skills_src = src / "skills"
 
         if plugins_src.exists():
-            if PLUGINS_DIR.exists():
-                shutil.rmtree(str(PLUGINS_DIR))
-            shutil.copytree(
-                str(plugins_src), str(PLUGINS_DIR),
-                symlinks=_SYMLINKS_ON,
-                ignore_dangling_symlinks=True,
-            )
+            _replace_dir_with_rollback(plugins_src, PLUGINS_DIR)
 
         if skills_src.exists():
-            if SKILLS_DIR.exists():
-                shutil.rmtree(str(SKILLS_DIR))
-            shutil.copytree(
-                str(skills_src), str(SKILLS_DIR),
-                symlinks=_SYMLINKS_ON,
-                ignore_dangling_symlinks=True,
-            )
+            _replace_dir_with_rollback(skills_src, SKILLS_DIR)
 
         # Detect broken symlinks after restore
         broken = []
@@ -458,15 +494,9 @@ def restore_sessions_backup(backup_path: str) -> bool:
         # Safety: backup current sessions first
         create_sessions_backup()
 
-        if PROJECTS_DIR.exists():
-            shutil.rmtree(str(PROJECTS_DIR))
-        shutil.copytree(
-            str(projects_src), str(PROJECTS_DIR),
-            symlinks=_SYMLINKS_ON,
-            ignore_dangling_symlinks=True,
-        )
+        _replace_dir_with_rollback(projects_src, PROJECTS_DIR)
         return True
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, shutil.Error) as e:
         logger.warning("Failed to restore sessions backup: %s", e)
         return False
 
@@ -552,6 +582,8 @@ def export_backup(backup_path: str, dest_dir: str | None = None) -> str | None:
 
         with tarfile.open(str(archive_path), "w:gz") as tar:
             tar.add(str(src), arcname=src.name)
+        # May bundle ~/.claude.json (OAuth tokens) — don't leave it world-readable.
+        _restrict(archive_path)
 
         return str(archive_path)
     except (OSError, ValueError, tarfile.TarError) as e:
