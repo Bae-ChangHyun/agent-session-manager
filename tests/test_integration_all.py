@@ -172,6 +172,18 @@ class TestCodexFeatures:
         outside.write_text("{}")
         assert cleaner.trash_codex_session(str(outside)) is False
 
+    def test_codex_backup_restore_roundtrip(self, monkeypatch, tmp_path):
+        env = _setup_fake_codex(monkeypatch, tmp_path)
+        path = backup_service.create_codex_backup()
+        assert path is not None
+
+        # Wipe live sessions, then restore from the backup.
+        import shutil as _sh
+        _sh.rmtree(env["sessions_dir"])
+        assert not env["sessions_dir"].exists()
+        assert backup_service.restore_codex_backup(path) is True
+        assert (env["sessions_dir"] / "2026" / "06" / "01" / "rollout-a.jsonl").exists()
+
 
 # --------------------------------------------------------------------------- #
 # UI drive — every tab in both modes

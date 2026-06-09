@@ -471,6 +471,34 @@ def restore_sessions_backup(backup_path: str) -> bool:
         return False
 
 
+def restore_codex_backup(backup_path: str) -> bool:
+    """Restore ~/.codex/sessions (and index/config files) from a codex backup."""
+    src = Path(backup_path)
+    sessions_src = src / "sessions"
+    if not src.exists() or not sessions_src.exists():
+        return False
+    try:
+        _validate_backup_path(src)
+        # Safety: back up current Codex sessions first.
+        create_codex_backup()
+
+        if CODEX_SESSIONS_DIR.exists():
+            shutil.rmtree(str(CODEX_SESSIONS_DIR))
+        shutil.copytree(
+            str(sessions_src), str(CODEX_SESSIONS_DIR),
+            symlinks=_SYMLINKS_ON,
+            ignore_dangling_symlinks=True,
+        )
+        for name in ("session_index.jsonl", "history.jsonl", "config.toml"):
+            f = src / name
+            if f.exists():
+                shutil.copy2(str(f), str(CODEX_DIR / name))
+        return True
+    except (OSError, ValueError) as e:
+        logger.warning("Failed to restore codex backup: %s", e)
+        return False
+
+
 # ── Delete backup ────────────────────────────────────────────────
 
 

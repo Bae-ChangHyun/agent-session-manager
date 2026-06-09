@@ -20,6 +20,7 @@ from cc_tui.services.backup import (
     export_backup,
     import_backup,
     list_backups,
+    restore_codex_backup,
     restore_config_backup,
     restore_full_backup,
     restore_plugins_backup,
@@ -538,6 +539,9 @@ class BackupsPane(Container):
                 self._notify_restore(ok, backup.name)
             elif btype == "sessions":
                 ok = restore_sessions_backup(backup.path)
+                self._notify_restore(ok, backup.name)
+            elif btype == "codex":
+                ok = restore_codex_backup(backup.path)
                 self._notify_restore(ok, backup.name)
             else:
                 ok = restore_full_backup(backup.path) if "[full]" in backup.name else restore_config_backup(backup.path)
