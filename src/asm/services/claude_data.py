@@ -565,82 +565,89 @@ def get_stats() -> Stats:
     )
 
 
-def get_period_usage(period: str = "daily") -> list[dict]:
-    """Get token usage data grouped by period from JSONL session files.
+# Cached result of the expensive scan that parses token usage out of every
+# session JSONL. Reused across daily/weekly/monthly so one screen refresh scans
+# the tree once instead of three times. Cleared by refresh_usage_cache().
+_usage_scan_cache: dict[str, dict] | None = None
 
-    Parses assistant messages in all session files for model/usage/timestamp data.
-    period: 'daily', 'weekly', 'monthly'
+
+def refresh_usage_cache() -> None:
+    """Drop the cached token-usage scan (call when the user refreshes)."""
+    global _usage_scan_cache
+    _usage_scan_cache = None
+
+
+def _collect_msg_usage() -> dict[str, dict]:
+    """Scan all session JSONL once: {message_id: {usage, model, ts_str}}.
+
+    Streaming writes several JSONL lines per API call with the same id; the last
+    one carries the final counts, so keeping the last entry per id deduplicates.
     """
-    from collections import defaultdict
-    from datetime import datetime, timedelta
-
-    from asm.services.pricing import calc_cost as _calc_cost
+    global _usage_scan_cache
+    if _usage_scan_cache is not None:
+        return _usage_scan_cache
     from asm.services.pricing import is_billable
 
-    def _period_key(dt: datetime) -> str:
-        if period == "monthly":
-            return dt.strftime("%Y-%m")
-        elif period == "weekly":
-            # ISO week start (Monday)
-            start = dt - timedelta(days=dt.weekday())
-            return start.strftime("%Y-%m-%d")
-        return dt.strftime("%Y-%m-%d")
+    msg_last: dict[str, dict] = {}
+    if PROJECTS_DIR.exists():
+        for d in PROJECTS_DIR.iterdir():
+            if not d.is_dir():
+                continue
+            for jsonl in d.rglob("*.jsonl"):
+                try:
+                    with open(jsonl) as f:
+                        for line in f:
+                            try:
+                                msg = json.loads(line)
+                                if msg.get("type") != "assistant":
+                                    continue
+                                m = msg.get("message", {})
+                                usage = m.get("usage")
+                                model = m.get("model", "")
+                                ts_str = msg.get("timestamp", "")
+                                msg_id = m.get("id", "")
+                                if not usage or not ts_str or not msg_id:
+                                    continue
+                                if not is_billable(model):
+                                    continue
+                                msg_last[msg_id] = {"usage": usage, "model": model, "ts_str": ts_str}
+                            except (json.JSONDecodeError, KeyError):
+                                continue
+                except OSError:
+                    continue
+    _usage_scan_cache = msg_last
+    return msg_last
 
-    # Aggregate: {period_key: {model: {input, output, cache_read, cache_create, cost}}}
+
+def _period_key(dt, period: str) -> str:
+    from datetime import timedelta
+    if period == "monthly":
+        return dt.strftime("%Y-%m")
+    if period == "weekly":
+        start = dt - timedelta(days=dt.weekday())  # ISO week start (Monday)
+        return start.strftime("%Y-%m-%d")
+    return dt.strftime("%Y-%m-%d")
+
+
+def _aggregate_period(msg_last: dict[str, dict], period: str) -> list[dict]:
+    from collections import defaultdict
+    from datetime import datetime
+
+    from asm.services.pricing import calc_cost as _calc_cost
+
     agg: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {
         "input_tokens": 0, "output_tokens": 0,
         "cache_read_tokens": 0, "cache_create_tokens": 0,
         "cost": 0.0, "messages": 0,
     }))
-
-    if not PROJECTS_DIR.exists():
-        return []
-
-    # First pass: collect last usage per message id (streaming writes
-    # multiple JSONL lines per API call with the same usage; only the
-    # last line carries the final output_tokens count).
-    msg_last: dict[str, dict] = {}  # message_id -> {usage, model, ts_str}
-    for d in PROJECTS_DIR.iterdir():
-        if not d.is_dir():
-            continue
-        for jsonl in d.rglob("*.jsonl"):
-            try:
-                with open(jsonl) as f:
-                    for line in f:
-                        try:
-                            msg = json.loads(line)
-                            if msg.get("type") != "assistant":
-                                continue
-                            m = msg.get("message", {})
-                            usage = m.get("usage")
-                            model = m.get("model", "")
-                            ts_str = msg.get("timestamp", "")
-                            msg_id = m.get("id", "")
-                            if not usage or not ts_str or not msg_id:
-                                continue
-                            if not is_billable(model):
-                                continue
-                            # Keep last entry per message id (final streaming event)
-                            msg_last[msg_id] = {
-                                "usage": usage,
-                                "model": model,
-                                "ts_str": ts_str,
-                            }
-                        except (json.JSONDecodeError, KeyError):
-                            continue
-            except OSError:
-                continue
-
-    # Second pass: aggregate deduplicated entries
     for info in msg_last.values():
-        usage = info["usage"]
-        model = info["model"]
-        ts_str = info["ts_str"]
         try:
-            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(info["ts_str"].replace("Z", "+00:00"))
         except ValueError:
             continue
-        pk = _period_key(dt)
+        usage = info["usage"]
+        model = info["model"]
+        pk = _period_key(dt, period)
         short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
         entry = agg[pk][short_model]
         entry["input_tokens"] += usage.get("input_tokens", 0)
@@ -650,25 +657,30 @@ def get_period_usage(period: str = "daily") -> list[dict]:
         entry["cost"] += _calc_cost(usage, model)
         entry["messages"] += 1
 
-    # Convert to sorted list
     result = []
     for pk in sorted(agg.keys(), reverse=True):
         models = agg[pk]
-        total_cost = sum(m["cost"] for m in models.values())
-        total_input = sum(m["input_tokens"] for m in models.values())
-        total_output = sum(m["output_tokens"] for m in models.values())
-        total_cache = sum(m["cache_read_tokens"] for m in models.values())
-        total_msgs = sum(m["messages"] for m in models.values())
         result.append({
             "period": pk,
-            "total_cost": total_cost,
-            "total_input": total_input,
-            "total_output": total_output,
-            "total_cache": total_cache,
-            "total_messages": total_msgs,
+            "total_cost": sum(m["cost"] for m in models.values()),
+            "total_input": sum(m["input_tokens"] for m in models.values()),
+            "total_output": sum(m["output_tokens"] for m in models.values()),
+            "total_cache": sum(m["cache_read_tokens"] for m in models.values()),
+            "total_messages": sum(m["messages"] for m in models.values()),
             "models": dict(models),
         })
     return result
+
+
+def get_period_usage(period: str = "daily") -> list[dict]:
+    """Token usage grouped by period ('daily' | 'weekly' | 'monthly')."""
+    return _aggregate_period(_collect_msg_usage(), period)
+
+
+def get_all_period_usage() -> dict[str, list[dict]]:
+    """All three period groupings from a single scan (for the dashboard)."""
+    msg_last = _collect_msg_usage()
+    return {p: _aggregate_period(msg_last, p) for p in ("daily", "weekly", "monthly")}
 
 
 def get_usage_data() -> dict:

@@ -111,6 +111,7 @@ class ProjectsPane(Container):
         self._all_projects: list[ProjectInfo] = []
         self._all_orphaned_sessions = []
         self._all_duplicates: dict[str, list[str]] = {}
+        self._codex_paths: set[str] = set()
         self._filter_query = ""
         self._sort_mode = "path"
 
@@ -123,19 +124,34 @@ class ProjectsPane(Container):
         self.run_worker(self._load_projects, thread=True)
 
     def _load_projects(self) -> None:
+        from asm.services import codex_data
         projects = get_projects()
         orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
         duplicates = find_duplicate_sessions()
+        # Merge Codex working directories into the same project tree, so both
+        # agents live in one view. Codex cwds not already known to Claude become
+        # their own project nodes.
+        codex_paths: set[str] = set()
+        if codex_data.is_available():
+            claude_paths = {p.path for p in projects}
+            for cp in codex_data.get_projects():
+                codex_paths.add(cp.path)
+                if cp.path not in claude_paths:
+                    projects.append(cp)
         if self.app.target_path:
             projects = [p for p in projects if p.path == self.app.target_path]
             orphaned_sessions = []
             duplicates = {}
-        self.app.call_from_thread(self._set_project_data, projects, orphaned_sessions, duplicates)
+            codex_paths = {p for p in codex_paths if p == self.app.target_path}
+        self.app.call_from_thread(
+            self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths
+        )
 
-    def _set_project_data(self, projects: list[ProjectInfo], orphaned_sessions, duplicates=None) -> None:
+    def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None) -> None:
         self._all_projects = projects
         self._all_orphaned_sessions = orphaned_sessions or []
         self._all_duplicates = duplicates or {}
+        self._codex_paths = codex_paths or set()
         self._build_tree_from_state()
 
     def _build_tree_from_state(self) -> None:
@@ -313,15 +329,23 @@ class ProjectsPane(Container):
         encoded = encode_path(p.path)
         session_dir = PROJECTS_DIR / encoded
         session_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
+        has_codex = p.path in self._codex_paths
+        # Source markers: C if it has Claude sessions, X if it has Codex sessions.
+        marks = ""
+        if session_count > 0:
+            marks += "[#D97757]C[/]"
+        if has_codex:
+            marks += "[#10A37F]X[/]"
+        marks_str = f"  {marks}" if marks else ""
         session_str = f"  [dim]{session_count} sessions[/]" if session_count > 0 else ""
 
-        label = f"{status} {display_name}{session_str}"
+        label = f"{status} {display_name}{marks_str}{session_str}"
+        expandable = session_count > 0 or has_codex
 
-        if session_count > 0 or child_dirs:
+        if expandable or child_dirs:
             node = parent.add(label, data=("project", p.path), expand=False)
-            if session_count > 0:
+            if expandable:
                 node.add_leaf("[dim]...[/]", data=("placeholder", None))
-            # Add child dirs if any
             if child_dirs:
                 self._render_tree_nodes(node, {k: v for k, v in child_dirs.items()}, p.path, all_paths)
         else:
@@ -338,21 +362,27 @@ class ProjectsPane(Container):
                 self.run_worker(lambda: self._load_sessions(event.node, value), thread=True)
 
     def _load_sessions(self, node, project_path: str) -> None:
-        sessions = get_project_sessions(project_path)
-        self.app.call_from_thread(self._populate_sessions, node, sessions)
+        # Claude sessions + Codex sessions for the same working directory.
+        tagged = [(s, "claude") for s in get_project_sessions(project_path)]
+        if project_path in self._codex_paths:
+            from asm.services import codex_data
+            tagged += [(s, "codex") for s in codex_data.get_project_sessions(project_path)]
+        tagged.sort(key=lambda t: t[0].last_modified, reverse=True)
+        self.app.call_from_thread(self._populate_sessions, node, tagged)
 
-    def _populate_sessions(self, node, sessions) -> None:
+    def _populate_sessions(self, node, tagged) -> None:
         # Remove placeholder
         for child in list(node.children):
             if child.data and child.data[0] == "placeholder":
                 child.remove()
-        for s in sessions:
+        for s, source in tagged:
             ts = s.last_modified / 1000 if s.last_modified > 1e12 else s.last_modified
             dt = datetime.fromtimestamp(ts).strftime("%m/%d %H:%M") if ts > 0 else "?"
             size_kb = s.file_size / 1024
             summary = s.summary.replace("\n", " ")[:50] if s.summary else s.session_id[:12]
-            label = f"[dim]{dt}[/]  [cyan]{summary}[/]  [dim]({size_kb:.0f}KB)[/]"
-            node.add_leaf(label, data=("session", s.session_id, s.project_dir))
+            tag = "[#D97757]C[/]" if source == "claude" else "[#10A37F]X[/]"
+            label = f"{tag} [dim]{dt}[/]  [cyan]{summary}[/]  [dim]({size_kb:.0f}KB)[/]"
+            node.add_leaf(label, data=("session", s.session_id, s.project_dir, source))
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         node_data = event.node.data
@@ -378,17 +408,18 @@ class ProjectsPane(Container):
         elif kind == "session":
             session_id = node_data[1]
             project_dir = node_data[2] if len(node_data) > 2 else None
-            self._selected_session = (session_id, project_dir)
+            source = node_data[3] if len(node_data) > 3 else "claude"
+            self._selected_session = (session_id, project_dir, source)
             self._selected_session_node = event.node
             self._render_detail_actions(
                 show_trash_session=True,
                 show_remove_config=False,
             )
-            self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
+            self.run_worker(lambda: self._load_messages(session_id, project_dir, source), thread=True)
         elif kind == "dup_copy":
             session_id = node_data[1]
             project_dir = node_data[2]
-            self._selected_session = (session_id, project_dir)
+            self._selected_session = (session_id, project_dir, "claude")
             self._selected_session_node = event.node
             self._selected_project_path = None
             self._render_detail_actions(
@@ -396,7 +427,7 @@ class ProjectsPane(Container):
                 show_remove_config=False,
             )
             self._show_duplicate_detail(session_id, project_dir)
-            self.run_worker(lambda: self._load_messages(session_id, project_dir), thread=True)
+            self.run_worker(lambda: self._load_messages(session_id, project_dir, "claude"), thread=True)
 
     def _show_duplicate_detail(self, session_id: str, project_dir: str) -> None:
         """Show which project dirs hold copies of a duplicated session."""
@@ -458,8 +489,12 @@ class ProjectsPane(Container):
             detail += f"\n{t('proj.no_sessions_hint')}"
         body.update(detail)
 
-    def _load_messages(self, session_id: str, project_dir: str | None) -> None:
-        messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
+    def _load_messages(self, session_id: str, project_dir: str | None, source: str = "claude") -> None:
+        if source == "codex":
+            from asm.services import codex_data
+            messages = codex_data.get_session_messages(session_id, project_dir, limit=50)
+        else:
+            messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
         self.app.call_from_thread(self._show_messages, session_id, messages)
 
     def _show_messages(self, session_id: str, messages: list[dict]) -> None:
@@ -503,7 +538,7 @@ class ProjectsPane(Container):
             session = getattr(self, "_selected_session", None)
             if not session:
                 return
-            session_id, project_dir = session
+            session_id = session[0]
             self.app.push_screen(
                 ConfirmScreen(
                     t("proj.confirm_trash_session", sid=f"{session_id[:16]}...")
@@ -534,34 +569,28 @@ class ProjectsPane(Container):
         session = getattr(self, "_selected_session", None)
         if not session:
             return
-        session_id, project_dir = session
+        session_id, project_dir = session[0], session[1]
+        source = session[2] if len(session) > 2 else "claude"
         if not project_dir:
             self.app.notify(t("proj.no_dir_info"), severity="error")
             return
         node = getattr(self, "_selected_session_node", None)
 
         def _work():
-            ok = trash_single_session_file(project_dir, session_id)
-            self.app.call_from_thread(self._on_session_trashed, ok, session_id, project_dir, node)
+            if source == "codex":
+                from asm.services.cleaner import trash_codex_session
+                ok = trash_codex_session(project_dir)  # project_dir holds the rollout path
+            else:
+                ok = trash_single_session_file(project_dir, session_id)
+            self.app.call_from_thread(self._on_session_trashed, ok, session_id, node)
         self.run_worker(_work, thread=True)
 
-    def _on_session_trashed(self, ok: bool, session_id: str, project_dir: str, node) -> None:
+    def _on_session_trashed(self, ok: bool, session_id: str, node) -> None:
         if ok:
             self.app.notify(t("proj.trash_ok", sid=f"{session_id[:12]}..."))
             self._selected_session = None
             if node:
-                parent = node.parent
                 node.remove()
-                if parent and parent.data and parent.data[0] == "project":
-                    session_dir = PROJECTS_DIR / project_dir
-                    new_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
-                    p_path = parent.data[1]
-                    p = self._project_map.get(p_path)
-                    if p:
-                        status = "[green]O[/]" if p.exists else "[red]X[/]"
-                        name = PurePath(p_path).name
-                        count_str = f"  [dim]{new_count} sessions[/]" if new_count > 0 else ""
-                        parent.set_label(f"{status} {name}{count_str}")
             self._render_detail_actions(show_trash_session=False, show_remove_config=False)
         else:
             self.app.notify(t("proj.trash_fail"), severity="error")

@@ -47,20 +47,17 @@ same view filtered to **Claude** and to **Codex**:
 ## ✨ Features
 
 ### Combined dashboard
-- **Cost across both agents** with an in-app source filter — press `s` for All / Claude / Codex
+- **Cost across both agents** with a source filter — **click** `All / Claude / Codex` or press `s`
 - Per-model token & cost breakdown (Opus / Sonnet / Haiku / GPT-5.x), each row tagged by source
-- Daily / weekly / monthly usage tables and a Top-10 project cost chart
+- Daily / weekly / monthly usage tables (one scan, all periods) and a Top-10 project cost chart
 - Accurate, current pricing from a LiteLLM-sourced rate table (new Opus/GPT models priced correctly, not at stale rates)
 
-### Claude management
-- **Projects:** tree from `.claude.json`, expand to preview session conversations, trash sessions, remove projects from config
-- **Orphan cleanup:** detect and bulk-clean sessions, file-history, debug, and task entries with no matching project
+### Unified sessions (Claude + Codex)
+- One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**
+- Expand a project to preview conversations from either agent; trash individual sessions
+- **Orphan cleanup:** detect and bulk-clean Claude sessions, file-history, debug, and task entries with no matching project
 - **Duplicate sessions:** find the same session copied across projects and delete individual copies
-- **Migration:** copy sessions between projects (originals preserved), with paths auto-rewritten
-
-### Codex sessions
-- Browse `~/.codex` rollout sessions grouped by working directory
-- Preview conversations and trash individual sessions
+- **Migration:** copy Claude sessions between projects (originals preserved), with paths auto-rewritten
 
 ### Safe by default
 - Every delete goes to the **OS trash** and is recorded in an audit log
@@ -139,7 +136,7 @@ Both sources are always available; `--source` only sets the dashboard's initial 
 | Key | Action |
 |:---:|:---|
 | `F1`–`F6` | Switch tabs |
-| `s` | Dashboard source filter (All / Claude / Codex) |
+| `s` / click | Dashboard source filter (All / Claude / Codex) |
 | `Tab` / `Shift+Tab` · `1` `2` `3` | Dashboard period (Daily / Weekly / Monthly) |
 | `d` / `D` | Trash selected / all orphaned |
 | `Space` · `Enter` | Toggle selection · Preview conversation |

@@ -8,7 +8,6 @@ from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from asm.i18n import t
 from asm.screens.backups import BackupsPane
-from asm.screens.codex_sessions import CodexSessionsPane
 from asm.screens.dashboard import DashboardPane
 from asm.screens.debug_todos import DebugTodosPane
 from asm.screens.file_history import FileHistoryPane
@@ -80,7 +79,7 @@ class CCTuiApp(App):
         with TabbedContent(id="main-tabs"):
             with TabPane(t("tab.dashboard"), id="tab-dashboard"):
                 yield DashboardPane()
-            # Claude-specific management tabs (operate on ~/.claude).
+            # Unified sessions: Claude projects + Codex working dirs in one tree.
             with TabPane(t("tab.projects"), id="tab-projects"):
                 yield ProjectsPane()
             with TabPane(t("tab.file_history"), id="tab-file-history"):
@@ -89,18 +88,9 @@ class CCTuiApp(App):
                 yield DebugTodosPane()
             with TabPane(t("tab.migrate"), id="tab-migrate"):
                 yield MigratePane()
-            # Codex sessions (operate on ~/.codex); only shown when present.
-            if self._codex_available():
-                with TabPane(t("tab.codex_sessions"), id="tab-codex-sessions"):
-                    yield CodexSessionsPane()
             with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
         yield Footer()
-
-    @staticmethod
-    def _codex_available() -> bool:
-        from asm.services import codex_data
-        return codex_data.is_available()
 
     def action_tab(self, tab_id: str) -> None:
         """Switch to a specific tab by ID (ignored if the tab isn't present)."""
@@ -138,6 +128,13 @@ class CCTuiApp(App):
     def action_dash_source(self) -> None:
         self._dash(None)
 
+    def action_dash_set_source(self, name: str) -> None:
+        """Set a specific dashboard source filter (from a clicked chip)."""
+        try:
+            self.query_one("DashboardPane").set_source(name)
+        except Exception:
+            pass
+
     def action_dash_daily(self) -> None:
         self._dash("daily")
 
@@ -165,10 +162,11 @@ class CCTuiApp(App):
 
     def action_refresh(self) -> None:
         """Refresh all panes that have refresh_data."""
-        from asm.services import codex_data
+        from asm.services import claude_data, codex_data
         codex_data.refresh()
+        claude_data.refresh_usage_cache()
         for pane in self.query(
-            "DashboardPane, ProjectsPane, CodexSessionsPane, FileHistoryPane, "
+            "DashboardPane, ProjectsPane, FileHistoryPane, "
             "DebugTodosPane, MigratePane, BackupsPane"
         ):
             if hasattr(pane, "refresh_data"):
