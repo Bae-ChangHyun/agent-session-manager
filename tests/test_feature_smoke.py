@@ -181,9 +181,11 @@ def _setup_fake_claude(monkeypatch, tmp_path: Path) -> dict[str, Path | str]:
     monkeypatch.setattr(claude_data, "DEBUG_DIR", debug_dir)
     monkeypatch.setattr(claude_data, "TODOS_DIR", todos_dir)
     monkeypatch.setattr(claude_data, "TASKS_DIR", tasks_dir)
-    # Keep Claude-only tests isolated from any real ~/.codex on this machine.
+    # Keep Claude-only tests isolated from any real ~/.codex on this machine,
+    # and drop usage caches primed by earlier tests against other tmp dirs.
     from asm.services import codex_data
     codex_data.refresh()
+    claude_data.refresh_usage_cache()
     monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", claude_dir / "no-codex")
     monkeypatch.setattr(cleaner, "SESSION_ENV_DIR", session_env_dir)
     monkeypatch.setattr(cleaner, "FILE_HISTORY_DIR", file_history_dir)

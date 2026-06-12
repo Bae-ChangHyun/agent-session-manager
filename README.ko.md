@@ -134,6 +134,27 @@ asm --no-update-check     # 시작 시 업데이트 확인 건너뛰기
 
 두 소스는 항상 함께 다룹니다. `--source`는 대시보드 초기 필터만 정하며, 실행 중 `s`로 언제든 바꿉니다.
 
+### Headless CLI
+
+모든 기능을 서브커맨드로도 쓸 수 있습니다 — 스크립트나 AI 에이전트에서 유용합니다. 터미널에서는 rich 테이블, 파이프로 받으면 plain text, `--json`이면 기계가 읽는 JSON으로 출력됩니다.
+
+```bash
+# 조회 (읽기 전용)
+asm cost --period weekly          # 모델별·기간별 비용/토큰 통계
+asm projects                      # 전체 프로젝트 (Claude + Codex)
+asm sessions --search "방화벽"     # 세션 제목 검색
+asm preview <session-id>          # 대화 내용 출력
+asm backup list / asm recovery list
+
+# 변경 — 실행 전 항상 확인을 묻습니다(--yes로 생략). TUI와 동일하게
+# 모든 삭제는 OS 휴지통 + 복구 스냅샷을 경유합니다.
+asm clean empty --dry-run         # empty | orphaned | debug | todos
+asm trash <session-id>
+asm backup create --type full     # config|full|settings|plugins|sessions|codex
+asm backup restore <path> / asm recovery restore <id>
+asm migrate /old/project /new/project
+```
+
 ### 키보드
 
 | 키 | 동작 |

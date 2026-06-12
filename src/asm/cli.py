@@ -1,0 +1,592 @@
+"""Headless CLI subcommands for asm.
+
+Bare ``asm`` opens the TUI; these subcommands expose the same service layer
+for scripts and agents. Destructive commands confirm first (skip with --yes)
+and go through the same trash/recovery-snapshot paths as the TUI.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+
+# ── helpers ─────────────────────────────────────────────────────────────
+
+
+def _out_json(data) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+
+
+def _confirm(prompt: str, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _fmt_ts(ts: float) -> str:
+    if not ts:
+        return "?"
+    if ts > 1e12:
+        ts /= 1000
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def _print_table(title: str | None, columns: list[str], rows: list[tuple], justify: tuple = ()) -> None:
+    """Render a rich table (used when stdout is a terminal).
+
+    Plain-str cells are wrapped in Text so user data (session titles, paths)
+    is never parsed as rich markup; pass a Text object for styled cells.
+    """
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+
+    table = Table(title=title, box=box.SIMPLE_HEAVY, header_style="bold cyan", title_justify="left")
+    for i, name in enumerate(columns):
+        table.add_column(name, justify=justify[i] if i < len(justify) else "left", overflow="fold")
+    for row in rows:
+        table.add_row(*(c if isinstance(c, Text) else Text(str(c)) for c in row))
+    Console().print(table)
+
+
+def _src_cell(src: str):
+    from rich.text import Text
+
+    # Same source colors as the TUI (Claude orange / Codex teal).
+    return Text("C", style="#D97757") if src == "claude" else Text("X", style="#10A37F")
+
+
+def _sources(source: str) -> list[str]:
+    from asm.services import codex_data
+
+    srcs = []
+    if source in ("all", "claude"):
+        srcs.append("claude")
+    if source in ("all", "codex") and codex_data.is_available():
+        srcs.append("codex")
+    return srcs
+
+
+def _tagged_sessions(source: str, project: str | None) -> list[tuple]:
+    """(SessionDetail, source, project_path) for the requested scope."""
+    from asm.services import claude_data, codex_data
+
+    rows: list[tuple] = []
+    if "claude" in _sources(source):
+        paths = [project] if project else [p.path for p in claude_data.get_projects()]
+        for path in paths:
+            for s in claude_data.get_project_sessions(path):
+                rows.append((s, "claude", path))
+    if "codex" in _sources(source):
+        cwds = [project] if project else [p.path for p in codex_data.get_projects()]
+        for cwd in cwds:
+            for s in codex_data.get_project_sessions(cwd):
+                rows.append((s, "codex", cwd))
+    rows.sort(key=lambda r: r[0].last_modified, reverse=True)
+    return rows
+
+
+# ── cost ────────────────────────────────────────────────────────────────
+
+
+def cmd_cost(args) -> int:
+    from asm.services import claude_data, codex_data
+
+    mods = {"claude": claude_data, "codex": codex_data}
+    result = {}
+    for src in _sources(args.source):
+        mod = mods[src]
+        usage = mod.get_usage_data()
+        periods = mod.get_period_usage(args.period)
+        result[src] = {
+            "total_cost": usage["total_cost"],
+            "first_use": usage.get("first_use", ""),
+            "model_totals": usage["model_totals"],
+            "top_projects": usage["project_costs"][:10],
+            args.period: periods[: args.limit],
+        }
+
+    if args.json:
+        _out_json(result)
+        return 0
+
+    if sys.stdout.isatty():
+        from rich.console import Console
+
+        console = Console()
+        num = ("left", "right", "right", "right", "right")
+        for src, data in result.items():
+            since = f"  [dim]since {data['first_use'][:10]}[/]" if data["first_use"] else ""
+            console.print(f"\n[bold]{src}[/] — [bold green]${data['total_cost']:,.2f}[/]{since}")
+            _print_table(
+                None, ["model", "cost", "input", "output"],
+                [(m, f"${mt['costUSD']:,.2f}", f"{mt['inputTokens']:,}", f"{mt['outputTokens']:,}")
+                 for m, mt in sorted(data["model_totals"].items(), key=lambda x: -x[1]["costUSD"])],
+                justify=num,
+            )
+            _print_table(
+                args.period, ["period", "cost", "input", "output", "msgs"],
+                [(r["period"], f"${r['total_cost']:,.2f}", f"{r['total_input']:,}",
+                  f"{r['total_output']:,}", f"{r['total_messages']:,}") for r in data[args.period]],
+                justify=num,
+            )
+        return 0
+
+    for src, data in result.items():
+        print(f"[{src}] total ${data['total_cost']:.2f}"
+              + (f"  (since {data['first_use'][:10]})" if data["first_use"] else ""))
+        for model, mt in sorted(data["model_totals"].items(), key=lambda x: -x[1]["costUSD"]):
+            print(f"  {model:<40} ${mt['costUSD']:>9.2f}  in {mt['inputTokens']:>12,}  out {mt['outputTokens']:>10,}")
+        print(f"  -- {args.period} --")
+        for row in data[args.period]:
+            print(f"  {row['period']:<10} ${row['total_cost']:>9.2f}  in {row['total_input']:>12,}  out {row['total_output']:>10,}  msgs {row['total_messages']}")
+        print()
+    return 0
+
+
+# ── projects / sessions / preview ───────────────────────────────────────
+
+
+def cmd_projects(args) -> int:
+    from asm.models import PROJECTS_DIR, encode_path
+    from asm.services import claude_data, codex_data
+
+    srcs = _sources(args.source)
+    merged: dict[str, dict] = {}
+    if "claude" in srcs:
+        for p in claude_data.get_projects():
+            d = PROJECTS_DIR / encode_path(p.path)
+            count = len(list(d.glob("*.jsonl"))) if d.exists() else 0
+            merged[p.path] = {"path": p.path, "exists": p.exists, "claude_sessions": count, "codex": False}
+    if "codex" in srcs:
+        for p in codex_data.get_projects():
+            entry = merged.setdefault(
+                p.path, {"path": p.path, "exists": p.exists, "claude_sessions": 0, "codex": False}
+            )
+            entry["codex"] = True
+
+    rows = sorted(merged.values(), key=lambda r: r["path"].casefold())
+    if args.json:
+        _out_json(rows)
+        return 0
+    if sys.stdout.isatty():
+        from rich.text import Text
+
+        _print_table(
+            f"{len(rows)} projects", ["", "project", "src", "sessions"],
+            [(
+                Text("●", style="green") if r["exists"] else Text("✗", style="red"),
+                r["path"],
+                Text("C", style="#D97757") + Text("X", style="#10A37F") if r["claude_sessions"] and r["codex"]
+                else _src_cell("claude") if r["claude_sessions"] else _src_cell("codex") if r["codex"] else Text("-"),
+                str(r["claude_sessions"] or ""),
+            ) for r in rows],
+            justify=("center", "left", "left", "right"),
+        )
+        return 0
+
+    for r in rows:
+        mark = ("C" if r["claude_sessions"] else "") + ("X" if r["codex"] else "")
+        status = "O" if r["exists"] else "X"
+        print(f"{status} {r['path']}  [{mark or '-'}]  {r['claude_sessions']} sessions")
+    print(f"\n{len(rows)} projects")
+    return 0
+
+
+def cmd_sessions(args) -> int:
+    rows = _tagged_sessions(args.source, args.project)
+    if args.search:
+        q = args.search.casefold()
+        rows = [r for r in rows if q in (r[0].summary or "").casefold()]
+    if args.limit:
+        rows = rows[: args.limit]
+
+    if args.json:
+        _out_json([
+            {
+                "session_id": s.session_id,
+                "source": src,
+                "project": path,
+                "title": s.summary,
+                "modified": _fmt_ts(s.last_modified),
+                "size_bytes": s.file_size,
+            }
+            for s, src, path in rows
+        ])
+        return 0
+    if sys.stdout.isatty():
+        _print_table(
+            f"{len(rows)} sessions", ["src", "modified", "session id", "title", "project"],
+            [(
+                _src_cell(src), _fmt_ts(s.last_modified), s.session_id,
+                (s.summary or "").replace("\n", " ")[:80], path,
+            ) for s, src, path in rows],
+        )
+        return 0
+
+    for s, src, path in rows:
+        title = (s.summary or "").replace("\n", " ")[:60]
+        print(f"{src[0].upper()} {_fmt_ts(s.last_modified)}  {s.session_id}  {title}  ({path})")
+    print(f"\n{len(rows)} sessions")
+    return 0
+
+
+def cmd_preview(args) -> int:
+    from asm.models import PROJECTS_DIR
+    from asm.services import claude_data, codex_data
+
+    # Resolve the owning project dir up front so the direct JSONL path is used
+    # (the SDK lookup returns [] for ids it can't find instead of raising).
+    project = args.project
+    if not project and PROJECTS_DIR.exists():
+        for d in PROJECTS_DIR.iterdir():
+            if d.is_dir() and (d / f"{args.session_id}.jsonl").exists():
+                project = d.name
+                break
+
+    messages = claude_data.get_session_messages(args.session_id, project, args.limit)
+    if not messages and codex_data.is_available():
+        messages = codex_data.get_session_messages(args.session_id, limit=args.limit)
+    if not messages:
+        print(f"session not found: {args.session_id}", file=sys.stderr)
+        return 1
+    if args.json:
+        _out_json(messages)
+        return 0
+    if sys.stdout.isatty():
+        from rich.console import Console
+
+        console = Console()
+        styles = {"user": "bold cyan", "assistant": "bold magenta"}
+        for m in messages:
+            role = m.get("type") or m.get("role") or "?"
+            console.rule(f"[{styles.get(role, 'dim')}]{role}[/]", align="left", style="dim")
+            console.print(m.get("content", ""), markup=False, highlight=False)
+        return 0
+    for m in messages:
+        role = m.get("type") or m.get("role") or "?"
+        print(f"--- {role} ---")
+        print(m.get("content", ""))
+    return 0
+
+
+# ── clean ───────────────────────────────────────────────────────────────
+
+
+def cmd_clean(args) -> int:
+    from asm.services import claude_data, cleaner
+
+    if args.target == "empty":
+        items = claude_data.find_empty_sessions()
+        if args.dry_run or not items:
+            _print_clean_plan(items, "empty session(s)", args)
+            return 0
+        if not _confirm(f"Trash {len(items)} empty session(s)?", args.yes):
+            return 1
+        ok = fail = 0
+        for e in items:
+            if cleaner.trash_single_session_file(e["project_dir"], e["session_id"]):
+                ok += 1
+            else:
+                fail += 1
+        print(f"trashed {ok}, failed {fail}")
+        return 0 if fail == 0 else 1
+
+    if args.target == "orphaned":
+        names = [s.dir_name for s in claude_data.get_sessions() if s.is_orphaned]
+        if args.dry_run or not names:
+            _print_clean_plan(names, "orphaned session dir(s)", args)
+            return 0
+        if not _confirm(f"Trash {len(names)} orphaned session dir(s)?", args.yes):
+            return 1
+        ok, fail = cleaner.trash_sessions(names)
+        print(f"trashed {ok}, failed {fail}")
+        return 0 if fail == 0 else 1
+
+    if args.target == "debug":
+        ok, fail = cleaner.prune_empty_debug_files()
+        print(f"pruned {ok} empty debug file(s), failed {fail}")
+        return 0
+    if args.target == "todos":
+        ok, fail = cleaner.prune_empty_todo_files()
+        print(f"pruned {ok} empty todo file(s), failed {fail}")
+        return 0
+    return 1
+
+
+def _print_clean_plan(items, label: str, args) -> None:
+    if args.json:
+        _out_json(items)
+        return
+    for it in items:
+        print(it if isinstance(it, str) else f"{it['session_id']}  ({it['project_dir']})  {it.get('title', '')}")
+    print(f"{len(items)} {label}" + (" — dry run, nothing deleted" if args.dry_run else ""))
+
+
+# ── backup / recovery ───────────────────────────────────────────────────
+
+_BACKUP_CREATORS = {
+    "config": "create_config_backup",
+    "full": "create_full_backup",
+    "settings": "create_settings_backup",
+    "plugins": "create_plugins_backup",
+    "sessions": "create_sessions_backup",
+    "codex": "create_codex_backup",
+}
+
+_BACKUP_RESTORERS = {
+    "config": "restore_config_backup",
+    "full": "restore_full_backup",
+    "settings": "restore_settings_backup",
+    "plugins": "restore_plugins_backup",
+    "sessions": "restore_sessions_backup",
+    "codex": "restore_codex_backup",
+}
+
+
+def cmd_backup(args) -> int:
+    from asm.services import backup
+
+    if args.action == "list":
+        items = backup.list_backups()
+        if args.json:
+            _out_json([vars(b) for b in items])
+            return 0
+        if sys.stdout.isatty():
+            _print_table(
+                f"{len(items)} backups", ["created", "type", "size", "path"],
+                [(_fmt_ts(b.created), b.backup_type, _fmt_size(b.size_bytes), b.path) for b in items],
+                justify=("left", "left", "right", "left"),
+            )
+            return 0
+        for b in items:
+            print(f"{_fmt_ts(b.created)}  {b.backup_type:<9} {_fmt_size(b.size_bytes):>9}  {b.path}")
+        print(f"\n{len(items)} backups")
+        return 0
+
+    if args.action == "create":
+        path = getattr(backup, _BACKUP_CREATORS[args.type])()
+        if path:
+            print(path)
+            return 0
+        print("backup failed", file=sys.stderr)
+        return 1
+
+    if args.action == "restore":
+        info = next((b for b in backup.list_backups() if b.path == args.path or b.name == args.path), None)
+        if not info:
+            print(f"backup not found: {args.path}", file=sys.stderr)
+            return 1
+        if not _confirm(f"Restore {info.backup_type} backup '{info.name}'? Current data is replaced (rollback-safe)", args.yes):
+            return 1
+        result = getattr(backup, _BACKUP_RESTORERS[info.backup_type])(info.path)
+        ok = result[0] if isinstance(result, tuple) else result
+        print("restored" if ok else "restore failed")
+        return 0 if ok else 1
+
+    if args.action == "delete":
+        if not _confirm(f"Delete backup {args.path}?", args.yes):
+            return 1
+        ok = backup.delete_backup(args.path)
+        print("deleted" if ok else "delete failed")
+        return 0 if ok else 1
+
+    if args.action == "export":
+        out = backup.export_backup(args.path, dest_dir=args.dest)
+        print(out or "export failed")
+        return 0 if out else 1
+
+    if args.action == "import":
+        out = backup.import_backup(args.path)
+        print(out or "import failed")
+        return 0 if out else 1
+    return 1
+
+
+def cmd_recovery(args) -> int:
+    from asm.services import recovery
+
+    if args.action == "list":
+        items = recovery.list_recovery_items()
+        if args.json:
+            _out_json([vars(r) for r in items])
+            return 0
+        if sys.stdout.isatty():
+            _print_table(
+                f"{len(items)} recovery snapshots", ["created", "id", "category", "original path"],
+                [(_fmt_ts(r.created), r.id, r.category, r.original_path) for r in items],
+            )
+            return 0
+        for r in items:
+            print(f"{_fmt_ts(r.created)}  {r.id}  [{r.category}]  {r.name}  -> {r.original_path}")
+        print(f"\n{len(items)} recovery snapshots")
+        return 0
+
+    if args.action == "restore":
+        if not _confirm(f"Restore snapshot {args.id}?", args.yes):
+            return 1
+        ok, msg = recovery.restore_recovery_item(args.id, overwrite=args.overwrite)
+        print(msg)
+        return 0 if ok else 1
+
+    if args.action == "delete":
+        if not _confirm(f"Delete snapshot {args.id}?", args.yes):
+            return 1
+        ok = recovery.delete_recovery_item(args.id)
+        print("deleted" if ok else "delete failed")
+        return 0 if ok else 1
+    return 1
+
+
+# ── trash / migrate ─────────────────────────────────────────────────────
+
+
+def cmd_trash(args) -> int:
+    from asm.models import PROJECTS_DIR
+    from asm.services import cleaner, codex_data
+
+    if PROJECTS_DIR.exists():
+        for d in PROJECTS_DIR.iterdir():
+            if d.is_dir() and (d / f"{args.session_id}.jsonl").exists():
+                if not _confirm(f"Trash Claude session {args.session_id} ({d.name})?", args.yes):
+                    return 1
+                ok = cleaner.trash_single_session_file(d.name, args.session_id)
+                print("trashed" if ok else "trash failed")
+                return 0 if ok else 1
+
+    if codex_data.is_available():
+        for cwd in [p.path for p in codex_data.get_projects()]:
+            for s in codex_data.get_project_sessions(cwd):
+                if s.session_id == args.session_id:
+                    if not _confirm(f"Trash Codex session {args.session_id}?", args.yes):
+                        return 1
+                    ok = cleaner.trash_codex_session(s.project_dir)  # rollout path
+                    print("trashed" if ok else "trash failed")
+                    return 0 if ok else 1
+
+    print(f"session not found: {args.session_id}", file=sys.stderr)
+    return 1
+
+
+def cmd_migrate(args) -> int:
+    from asm.models import encode_path
+    from asm.services import migrate
+
+    if not _confirm(
+        f"Migrate sessions {args.src} -> {args.dest}"
+        + (f" ({len(args.sessions)} selected)" if args.sessions else " (all)") + "?",
+        args.yes,
+    ):
+        return 1
+    result = migrate.migrate_sessions(
+        source_path=args.src,
+        target_path=args.dest,
+        source_encoded=encode_path(args.src),
+        target_encoded=encode_path(args.dest),
+        session_ids=args.sessions or None,
+    )
+    print(f"{'ok' if result.success else 'failed'}: {result.sessions_copied} session(s) copied"
+          + (f" — {result.message}" if result.message else ""))
+    return 0 if result.success else 1
+
+
+# ── parser wiring ───────────────────────────────────────────────────────
+
+
+def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
+    sub = parser.add_subparsers(dest="command", metavar="command")
+
+    def _common(p, json_flag=True):
+        if json_flag:
+            p.add_argument("--json", action="store_true", help="machine-readable JSON output")
+
+    p = sub.add_parser("cost", help="cost/token usage stats")
+    p.add_argument("--period", choices=["daily", "weekly", "monthly"], default="daily")
+    p.add_argument("--source", choices=["all", "claude", "codex"], default="all")
+    p.add_argument("--limit", type=int, default=14, help="max period rows (default 14)")
+    _common(p)
+    p.set_defaults(func=cmd_cost)
+
+    p = sub.add_parser("projects", help="list projects")
+    p.add_argument("--source", choices=["all", "claude", "codex"], default="all")
+    _common(p)
+    p.set_defaults(func=cmd_projects)
+
+    p = sub.add_parser("sessions", help="list/search sessions by title")
+    p.add_argument("--project", help="limit to one project path")
+    p.add_argument("--search", help="substring match on session title")
+    p.add_argument("--source", choices=["all", "claude", "codex"], default="all")
+    p.add_argument("--limit", type=int, default=50, help="max rows (default 50, 0 = all)")
+    _common(p)
+    p.set_defaults(func=cmd_sessions)
+
+    p = sub.add_parser("preview", help="print a session's conversation")
+    p.add_argument("session_id")
+    p.add_argument("--project", help="project path hint (faster lookup)")
+    p.add_argument("--limit", type=int, default=50)
+    _common(p)
+    p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("clean", help="clean up stale data (trash + recovery snapshot)")
+    p.add_argument("target", choices=["empty", "orphaned", "debug", "todos"])
+    p.add_argument("--dry-run", action="store_true", help="list only, delete nothing")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    _common(p)
+    p.set_defaults(func=cmd_clean)
+
+    p = sub.add_parser("backup", help="manage backups")
+    p.add_argument("action", choices=["list", "create", "restore", "delete", "export", "import"])
+    p.add_argument("path", nargs="?", help="backup path/name (restore/delete/export) or archive (import)")
+    p.add_argument("--type", choices=sorted(_BACKUP_CREATORS), default="config", help="backup type for create")
+    p.add_argument("--dest", help="destination dir for export")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    _common(p)
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("recovery", help="recovery snapshots (created before deletions)")
+    p.add_argument("action", choices=["list", "restore", "delete"])
+    p.add_argument("id", nargs="?", help="snapshot id (restore/delete)")
+    p.add_argument("--overwrite", action="store_true", help="overwrite existing data on restore")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    _common(p)
+    p.set_defaults(func=cmd_recovery)
+
+    p = sub.add_parser("trash", help="trash one session by id (Claude or Codex)")
+    p.add_argument("session_id")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    p.set_defaults(func=cmd_trash)
+
+    p = sub.add_parser("migrate", help="copy sessions to another project path")
+    p.add_argument("src", help="source project path")
+    p.add_argument("dest", help="target project path")
+    p.add_argument("--sessions", nargs="*", help="session ids (default: all)")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    p.set_defaults(func=cmd_migrate)
+
+
+def run_cli(args) -> int:
+    """Dispatch a parsed subcommand; returns the process exit code."""
+    # Validate positional combos argparse can't express.
+    if args.command == "backup" and args.action in ("restore", "delete", "export", "import") and not args.path:
+        print(f"backup {args.action} requires a path", file=sys.stderr)
+        return 2
+    if args.command == "recovery" and args.action in ("restore", "delete") and not args.id:
+        print(f"recovery {args.action} requires an id", file=sys.stderr)
+        return 2
+    return args.func(args)
