@@ -135,6 +135,27 @@ asm --no-update-check     # Skip the startup update check
 
 Both sources are always available; `--source` only sets the dashboard's initial filter, which you change anytime with `s`.
 
+### Headless CLI
+
+Every feature is also available as a subcommand — handy for scripts and AI agents. In a terminal you get rich tables; piped output is plain text, and `--json` gives machine-readable output.
+
+```bash
+# Read-only
+asm cost --period weekly          # Cost/token stats per model & period
+asm projects                      # All projects (Claude + Codex)
+asm sessions --search "firewall"  # Search sessions by title
+asm preview <session-id>          # Print a conversation
+asm backup list / asm recovery list
+
+# Destructive — always confirms first (skip with --yes); everything goes
+# through the OS trash + recovery snapshots, same as the TUI.
+asm clean empty --dry-run         # empty | orphaned | debug | todos
+asm trash <session-id>
+asm backup create --type full     # config|full|settings|plugins|sessions|codex
+asm backup restore <path> / asm recovery restore <id>
+asm migrate /old/project /new/project
+```
+
 ### Keyboard
 
 | Key | Action |
