@@ -242,7 +242,8 @@ def cmd_sessions(args) -> int:
 
     for s, src, path in rows:
         title = (s.summary or "").replace("\n", " ")[:60]
-        print(f"{src[0].upper()} {_fmt_ts(s.last_modified)}  {s.session_id}  {title}  ({path})")
+        mark = "C" if src == "claude" else "X"
+        print(f"{mark} {_fmt_ts(s.last_modified)}  {s.session_id}  {title}  ({path})")
     print(f"\n{len(rows)} sessions")
     return 0
 
