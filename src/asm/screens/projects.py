@@ -120,6 +120,11 @@ class ProjectsPane(Container):
         self._empty_sessions: list[dict] = []
         self._filter_query = ""
         self._sort_mode = "path"
+        # Session-title search: per-project (SessionDetail, source) cache built
+        # lazily on first title query, and the current query's matches.
+        self._session_cache: dict[str, list] | None = None
+        self._session_cache_building = False
+        self._session_match_map: dict[str, list] = {}
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -161,15 +166,22 @@ class ProjectsPane(Container):
         self._all_duplicates = duplicates or {}
         self._codex_paths = codex_paths or set()
         self._empty_sessions = empty_sessions or []
+        self._session_cache = None
         self._build_tree_from_state()
 
     def _build_tree_from_state(self) -> None:
         projects = list(self._all_projects)
         orphaned_sessions = list(self._all_orphaned_sessions)
         query = self._filter_query.casefold()
+        self._session_match_map = {}
 
         if query:
-            projects = [p for p in projects if query in p.path.casefold()]
+            session_matches = self._match_sessions_by_title(query)
+            self._session_match_map = session_matches
+            projects = [
+                p for p in projects
+                if query in p.path.casefold() or p.path in session_matches
+            ]
             orphaned_sessions = [
                 s for s in orphaned_sessions
                 if query in s.dir_name.casefold() or query in PurePath(s.actual_path).name.casefold()
@@ -183,6 +195,39 @@ class ProjectsPane(Container):
             projects.sort(key=lambda p: p.path.casefold())
 
         self._build_tree(projects, orphaned_sessions)
+
+    def _match_sessions_by_title(self, query: str) -> dict[str, list]:
+        """Map project path -> tagged sessions whose title matches the filter.
+
+        The title cache is built lazily in a worker on the first query; until
+        it is ready this returns no matches (path filtering still applies) and
+        the tree is rebuilt once the cache lands.
+        """
+        if self._session_cache is None:
+            if not self._session_cache_building:
+                self._session_cache_building = True
+                self.run_worker(self._build_session_cache, thread=True)
+            return {}
+        matches: dict[str, list] = {}
+        for path, tagged in self._session_cache.items():
+            hit = [ts for ts in tagged if query in (ts[0].summary or "").casefold()]
+            if hit:
+                matches[path] = hit
+        return matches
+
+    def _build_session_cache(self) -> None:
+        cache: dict[str, list] = {}
+        for p in self._all_projects:
+            tagged = self._tagged_sessions(p.path)
+            if tagged:
+                cache[p.path] = tagged
+        self.app.call_from_thread(self._on_session_cache_ready, cache)
+
+    def _on_session_cache_ready(self, cache: dict[str, list]) -> None:
+        self._session_cache = cache
+        self._session_cache_building = False
+        if self._filter_query:
+            self._build_tree_from_state()
 
     def _build_tree(self, projects: list[ProjectInfo], orphaned_sessions=None) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -335,7 +380,7 @@ class ProjectsPane(Container):
                     group = parent_node.add(
                         f"[bold]{collapsed_label}/[/]  ({count})",
                         data=("group", collapsed_path),
-                        expand=False,
+                        expand=bool(self._filter_query),
                     )
                     self._render_tree_nodes(group, collapsed_children, collapsed_path, all_paths)
             else:
@@ -344,7 +389,7 @@ class ProjectsPane(Container):
                 group = parent_node.add(
                     f"[bold]{key}/[/]  ({count})",
                     data=("group", new_path),
-                    expand=False,
+                    expand=bool(self._filter_query),
                 )
                 self._render_tree_nodes(group, children, new_path, all_paths)
 
@@ -375,9 +420,13 @@ class ProjectsPane(Container):
         label = f"{status} {display_name}{marks_str}{session_str}"
         expandable = session_count > 0 or has_codex
 
+        matched_sessions = self._session_match_map.get(p.path)
         if expandable or child_dirs:
-            node = parent.add(label, data=("project", p.path), expand=False)
-            if expandable:
+            node = parent.add(label, data=("project", p.path), expand=bool(matched_sessions))
+            if matched_sessions:
+                # Title search hit: show only the matching sessions, pre-loaded.
+                self._populate_sessions(node, matched_sessions)
+            elif expandable:
                 node.add_leaf("[dim]...[/]", data=("placeholder", None))
             if child_dirs:
                 self._render_tree_nodes(node, {k: v for k, v in child_dirs.items()}, p.path, all_paths)
@@ -394,13 +443,18 @@ class ProjectsPane(Container):
             if any(c.data and c.data[0] == "placeholder" for c in children):
                 self.run_worker(lambda: self._load_sessions(event.node, value), thread=True)
 
-    def _load_sessions(self, node, project_path: str) -> None:
-        # Claude sessions + Codex sessions for the same working directory.
+    def _tagged_sessions(self, project_path: str) -> list:
+        """Claude + Codex sessions for one working directory, newest first."""
         tagged = [(s, "claude") for s in get_project_sessions(project_path)]
         if project_path in self._codex_paths:
             from asm.services import codex_data
             tagged += [(s, "codex") for s in codex_data.get_project_sessions(project_path)]
         tagged.sort(key=lambda t: t[0].last_modified, reverse=True)
+        return tagged
+
+    def _load_sessions(self, node, project_path: str) -> None:
+        # Claude sessions + Codex sessions for the same working directory.
+        tagged = self._tagged_sessions(project_path)
         self.app.call_from_thread(self._populate_sessions, node, tagged)
 
     def _populate_sessions(self, node, tagged) -> None:
