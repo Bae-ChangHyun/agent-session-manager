@@ -121,9 +121,11 @@ class ProjectsPane(Container):
         self._filter_query = ""
         self._sort_mode = "path"
         # Session-title search: per-project (SessionDetail, source) cache built
-        # lazily on first title query, and the current query's matches.
+        # lazily on first title query, and the current query's matches. The
+        # generation counter discards cache builds that finish after a refresh.
         self._session_cache: dict[str, list] | None = None
         self._session_cache_building = False
+        self._session_cache_gen = 0
         self._session_match_map: dict[str, list] = {}
 
     def on_mount(self) -> None:
@@ -167,6 +169,7 @@ class ProjectsPane(Container):
         self._codex_paths = codex_paths or set()
         self._empty_sessions = empty_sessions or []
         self._session_cache = None
+        self._session_cache_gen += 1
         self._build_tree_from_state()
 
     def _build_tree_from_state(self) -> None:
@@ -206,7 +209,8 @@ class ProjectsPane(Container):
         if self._session_cache is None:
             if not self._session_cache_building:
                 self._session_cache_building = True
-                self.run_worker(self._build_session_cache, thread=True)
+                gen = self._session_cache_gen
+                self.run_worker(lambda: self._build_session_cache(gen), thread=True)
             return {}
         matches: dict[str, list] = {}
         for path, tagged in self._session_cache.items():
@@ -215,17 +219,23 @@ class ProjectsPane(Container):
                 matches[path] = hit
         return matches
 
-    def _build_session_cache(self) -> None:
+    def _build_session_cache(self, gen: int) -> None:
         cache: dict[str, list] = {}
         for p in self._all_projects:
             tagged = self._tagged_sessions(p.path)
             if tagged:
                 cache[p.path] = tagged
-        self.app.call_from_thread(self._on_session_cache_ready, cache)
+        self.app.call_from_thread(self._on_session_cache_ready, cache, gen)
 
-    def _on_session_cache_ready(self, cache: dict[str, list]) -> None:
-        self._session_cache = cache
+    def _on_session_cache_ready(self, cache: dict[str, list], gen: int) -> None:
         self._session_cache_building = False
+        if gen != self._session_cache_gen:
+            # Data was refreshed while scanning: this cache reflects the old
+            # project list. Drop it; rebuilding the tree retriggers a fresh scan.
+            if self._filter_query:
+                self._build_tree_from_state()
+            return
+        self._session_cache = cache
         if self._filter_query:
             self._build_tree_from_state()
 
