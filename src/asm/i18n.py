@@ -54,8 +54,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "ko": "프로젝트 또는 세션을 선택하세요",
     },
     "proj.filter_placeholder": {
-        "en": "Filter projects by path...",
-        "ko": "경로로 프로젝트 필터...",
+        "en": "Filter by path or session title...",
+        "ko": "경로 또는 세션 제목으로 필터...",
     },
     "proj.sort_path": {"en": "Path", "ko": "경로"},
     "proj.sort_cost": {"en": "Cost", "ko": "비용"},

@@ -334,3 +334,48 @@ def test_app_feature_smoke(monkeypatch, tmp_path: Path):
             assert app.query_one("#backups-table") is not None
 
     asyncio.run(run_app())
+
+
+def test_projects_filter_by_session_title(monkeypatch, tmp_path: Path):
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+
+    async def run_app() -> None:
+        from textual.widgets import Input, Tree
+
+        app = CCTuiApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_tab("tab-projects")
+            await pilot.pause()
+
+            pane = app.query_one(projects_screen.ProjectsPane)
+            for _ in range(100):  # wait for the initial project load worker
+                if pane._all_projects:
+                    break
+                await pilot.pause(0.05)
+            assert pane._all_projects
+
+            # "alpha prompt" is project_a's session title and matches no path.
+            filter_input = app.query_one("#projects-filter", Input)
+            filter_input.value = "alpha prompt"
+            for _ in range(100):  # wait for the title-cache build worker
+                if pane._session_match_map:
+                    break
+                await pilot.pause(0.05)
+
+            tree = app.query_one("#project-tree", Tree)
+
+            def walk(node, acc):
+                for child in node.children:
+                    acc.append(child)
+                    walk(child, acc)
+                return acc
+
+            nodes = walk(tree.root, [])
+            project_paths = [n.data[1] for n in nodes if n.data and n.data[0] == "project"]
+            session_ids = [n.data[1] for n in nodes if n.data and n.data[0] == "session"]
+            assert env["project_a"] in project_paths
+            assert env["project_b"] not in project_paths
+            assert env["session_id"] in session_ids
+
+    asyncio.run(run_app())
