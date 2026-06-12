@@ -13,6 +13,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from asm.utils import format_bytes
+
 
 # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -38,12 +40,19 @@ def _fmt_ts(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
 
-def _fmt_size(n: float) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
-        n /= 1024
-    return f"{n:.1f}TB"
+def _role(m: dict) -> str:
+    return m.get("type") or m.get("role") or "?"
+
+
+def _find_claude_project_dir(session_id: str) -> str | None:
+    """Encoded project dir name owning this session's JSONL, if any."""
+    from asm.models import PROJECTS_DIR
+
+    if PROJECTS_DIR.exists():
+        for d in PROJECTS_DIR.iterdir():
+            if d.is_dir() and (d / f"{session_id}.jsonl").exists():
+                return d.name
+    return None
 
 
 def _print_table(title: str | None, columns: list[str], rows: list[tuple], justify: tuple = ()) -> None:
@@ -119,7 +128,7 @@ def cmd_cost(args) -> int:
             "first_use": usage.get("first_use", ""),
             "model_totals": usage["model_totals"],
             "top_projects": usage["project_costs"][:10],
-            args.period: periods[: args.limit],
+            args.period: periods[: args.limit] if args.limit else periods,
         }
 
     if args.json:
@@ -249,17 +258,11 @@ def cmd_sessions(args) -> int:
 
 
 def cmd_preview(args) -> int:
-    from asm.models import PROJECTS_DIR
     from asm.services import claude_data, codex_data
 
     # Resolve the owning project dir up front so the direct JSONL path is used
     # (the SDK lookup returns [] for ids it can't find instead of raising).
-    project = args.project
-    if not project and PROJECTS_DIR.exists():
-        for d in PROJECTS_DIR.iterdir():
-            if d.is_dir() and (d / f"{args.session_id}.jsonl").exists():
-                project = d.name
-                break
+    project = args.project or _find_claude_project_dir(args.session_id)
 
     messages = claude_data.get_session_messages(args.session_id, project, args.limit)
     if not messages and codex_data.is_available():
@@ -276,12 +279,12 @@ def cmd_preview(args) -> int:
         console = Console()
         styles = {"user": "bold cyan", "assistant": "bold magenta"}
         for m in messages:
-            role = m.get("type") or m.get("role") or "?"
+            role = _role(m)
             console.rule(f"[{styles.get(role, 'dim')}]{role}[/]", align="left", style="dim")
             console.print(m.get("content", ""), markup=False, highlight=False)
         return 0
     for m in messages:
-        role = m.get("type") or m.get("role") or "?"
+        role = _role(m)
         print(f"--- {role} ---")
         print(m.get("content", ""))
     return 0
@@ -372,12 +375,12 @@ def cmd_backup(args) -> int:
         if sys.stdout.isatty():
             _print_table(
                 f"{len(items)} backups", ["created", "type", "size", "path"],
-                [(_fmt_ts(b.created), b.backup_type, _fmt_size(b.size_bytes), b.path) for b in items],
+                [(_fmt_ts(b.created), b.backup_type, format_bytes(b.size_bytes), b.path) for b in items],
                 justify=("left", "left", "right", "left"),
             )
             return 0
         for b in items:
-            print(f"{_fmt_ts(b.created)}  {b.backup_type:<9} {_fmt_size(b.size_bytes):>9}  {b.path}")
+            print(f"{_fmt_ts(b.created)}  {b.backup_type:<9} {format_bytes(b.size_bytes):>10}  {b.path}")
         print(f"\n{len(items)} backups")
         return 0
 
@@ -459,17 +462,15 @@ def cmd_recovery(args) -> int:
 
 
 def cmd_trash(args) -> int:
-    from asm.models import PROJECTS_DIR
     from asm.services import cleaner, codex_data
 
-    if PROJECTS_DIR.exists():
-        for d in PROJECTS_DIR.iterdir():
-            if d.is_dir() and (d / f"{args.session_id}.jsonl").exists():
-                if not _confirm(f"Trash Claude session {args.session_id} ({d.name})?", args.yes):
-                    return 1
-                ok = cleaner.trash_single_session_file(d.name, args.session_id)
-                print("trashed" if ok else "trash failed")
-                return 0 if ok else 1
+    encoded_dir = _find_claude_project_dir(args.session_id)
+    if encoded_dir:
+        if not _confirm(f"Trash Claude session {args.session_id} ({encoded_dir})?", args.yes):
+            return 1
+        ok = cleaner.trash_single_session_file(encoded_dir, args.session_id)
+        print("trashed" if ok else "trash failed")
+        return 0 if ok else 1
 
     if codex_data.is_available():
         for cwd in [p.path for p in codex_data.get_projects()]:
@@ -520,7 +521,7 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p = sub.add_parser("cost", help="cost/token usage stats")
     p.add_argument("--period", choices=["daily", "weekly", "monthly"], default="daily")
     p.add_argument("--source", choices=["all", "claude", "codex"], default="all")
-    p.add_argument("--limit", type=int, default=14, help="max period rows (default 14)")
+    p.add_argument("--limit", type=int, default=14, help="max period rows (default 14, 0 = all)")
     _common(p)
     p.set_defaults(func=cmd_cost)
 
