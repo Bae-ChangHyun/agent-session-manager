@@ -169,25 +169,47 @@ def get_projects(limit: int = SCAN_LIMIT) -> list[ProjectInfo]:
     return result
 
 
+def _detail_from_info(info: dict) -> SessionDetail:
+    summary = info["first_prompt"] or f"(session {info['id'][:8]})"
+    return SessionDetail(
+        session_id=info["id"],
+        summary=summary,
+        last_modified=info["mtime"],
+        file_size=info["size"],
+        first_prompt=info["first_prompt"],
+        git_branch=info["git_branch"],
+        cwd=info["cwd"],
+        project_dir=info["path"],  # full rollout path, used for messages/trash
+    )
+
+
 def get_project_sessions(cwd: str, limit: int = SCAN_LIMIT) -> list[SessionDetail]:
     """Return Codex sessions whose working directory matches ``cwd``."""
+    result = [
+        _detail_from_info(info)
+        for info in _scanned_sessions(limit)
+        if info["cwd"] == cwd
+    ]
+    result.sort(key=lambda s: s.last_modified, reverse=True)
+    return result
+
+
+def get_sessions_by_paths(paths) -> list[SessionDetail]:
+    """Load Codex sessions directly from rollout file paths, ignoring SCAN_LIMIT.
+
+    Full-text search scans every rollout via ripgrep, so a body match can live
+    in a session older than the recent-N scan cap. This loads those matches
+    straight from disk so they still surface. Unreadable/missing paths are
+    skipped; results are newest-first.
+    """
     result = []
-    for info in _scanned_sessions(limit):
-        if info["cwd"] != cwd:
+    for p in paths:
+        f = Path(p)
+        if not f.exists():
             continue
-        summary = info["first_prompt"] or f"(session {info['id'][:8]})"
-        result.append(
-            SessionDetail(
-                session_id=info["id"],
-                summary=summary,
-                last_modified=info["mtime"],
-                file_size=info["size"],
-                first_prompt=info["first_prompt"],
-                git_branch=info["git_branch"],
-                cwd=info["cwd"],
-                project_dir=info["path"],  # full rollout path, used for messages/trash
-            )
-        )
+        info = _scan_session(f)
+        if info is not None:
+            result.append(_detail_from_info(info))
     result.sort(key=lambda s: s.last_modified, reverse=True)
     return result
 

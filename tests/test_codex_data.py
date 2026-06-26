@@ -65,6 +65,19 @@ class TestCodexData:
             msgs = codex_data.get_session_messages("aaaa", ses[0].project_dir)
             assert {m["type"] for m in msgs} == {"user", "assistant"}
 
+    def test_get_sessions_by_paths_ignores_scan_limit(self, tmp_path: Path):
+        sessions = _setup(tmp_path)
+        codex_data.refresh()
+        with patch.object(codex_data, "CODEX_SESSIONS_DIR", sessions):
+            # Loading straight from a rollout path works regardless of how many
+            # recent sessions the scan cap would cover; bad paths are skipped.
+            rollout = sessions / "2026" / "06" / "01" / "rollout-2026-06-01T09-00-00-aaaa.jsonl"
+            loaded = codex_data.get_sessions_by_paths([str(rollout), "/nope/missing.jsonl"])
+            assert len(loaded) == 1
+            assert loaded[0].session_id == "aaaa"
+            assert loaded[0].cwd == "/work/proj-a"
+            assert loaded[0].project_dir == str(rollout)
+
     def test_period_usage_cost(self, tmp_path: Path):
         sessions = _setup(tmp_path)
         codex_data.refresh()
