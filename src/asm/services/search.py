@@ -14,6 +14,7 @@ dir, so a content hit is identified by the file stem; Codex stores global
 from __future__ import annotations
 
 import shutil
+import re
 import subprocess
 from pathlib import Path
 
@@ -25,19 +26,45 @@ from asm.models import CODEX_SESSIONS_DIR, PROJECTS_DIR
 _GREP_TIMEOUT = 15
 
 
-def _ripgrep_files(query: str, root: Path, glob: str) -> list[Path] | None:
-    """Files under ``root`` matching ``glob`` whose contents contain ``query``.
+def normalize(text: str) -> str:
+    """Casefold and strip all whitespace, so spacing never affects matching.
 
-    Case-insensitive, literal (fixed-string) match. Returns ``None`` when
-    ripgrep is unavailable so callers fall back to a Python scan; returns an
-    empty list on timeout or ripgrep error.
+    A user who half-remembers a phrase can type "warp한글" or "warp 한글" and
+    get the same hits. Title and body search both compare via this, keeping the
+    two paths consistent.
+    """
+    return "".join(text.split()).casefold()
+
+
+def _flexible_regex(query: str) -> str | None:
+    """Regex matching ``query`` while ignoring whitespace differences.
+
+    Each non-space character is joined by ``\\s*``, so "warp한글" also matches a
+    body containing "warp 한글" and vice-versa. Returns None for an all-space /
+    empty query. Characters are escaped, so regex metacharacters are literal.
+    """
+    chars = [re.escape(c) for c in query if not c.isspace()]
+    if not chars:
+        return None
+    return r"\s*".join(chars)
+
+
+def _ripgrep_files(query: str, root: Path, glob: str) -> list[Path] | None:
+    """Files under ``root`` matching ``glob`` whose body contains ``query``.
+
+    Whitespace-insensitive, case-insensitive. Returns ``None`` when ripgrep is
+    unavailable so callers fall back to a Python scan; returns an empty list on
+    timeout / ripgrep error / empty query.
     """
     rg = shutil.which("rg")
     if rg is None:
         return None
+    pattern = _flexible_regex(query)
+    if pattern is None:
+        return []
     try:
         proc = subprocess.run(
-            [rg, "-l", "-i", "-F", "-g", glob, "--", query, str(root)],
+            [rg, "-l", "-i", "-e", pattern, "-g", glob, str(root)],
             capture_output=True,
             text=True,
             timeout=_GREP_TIMEOUT,
@@ -52,13 +79,15 @@ def _ripgrep_files(query: str, root: Path, glob: str) -> list[Path] | None:
 
 def _python_grep_files(query: str, root: Path, glob: str) -> list[Path]:
     """Fallback content scan without ripgrep (slower, bounded by file count)."""
-    needle = query.casefold()
+    needle = normalize(query)
+    if not needle:
+        return []
     hits: list[Path] = []
     try:
         for f in root.rglob(glob):
             try:
                 with open(f, encoding="utf-8", errors="ignore") as fh:
-                    if any(needle in line.casefold() for line in fh):
+                    if any(needle in normalize(line) for line in fh):
                         hits.append(f)
             except OSError:
                 continue

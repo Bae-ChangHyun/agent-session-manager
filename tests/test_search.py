@@ -47,6 +47,26 @@ def test_claude_body_search_finds_mid_conversation(tmp_path):
     importlib.reload(search)
 
 
+def test_search_ignores_whitespace(tmp_path):
+    """Body has 'warp 한글'; both spaced and unspaced queries find it."""
+    projects_dir, codex_dir = _setup(tmp_path)
+    with patch.object(models, "PROJECTS_DIR", projects_dir), \
+         patch.object(models, "CODEX_SESSIONS_DIR", codex_dir):
+        importlib.reload(search)
+        spaced = search.search_claude_session_ids("warp 한글")
+        unspaced = search.search_claude_session_ids("warp한글")
+        assert spaced == unspaced == {"aaaa-1111"}
+        # Same for the Python fallback (ripgrep forced off).
+        with patch("asm.services.search.shutil.which", return_value=None):
+            assert search.search_claude_session_ids("warp한글") == {"aaaa-1111"}
+    importlib.reload(search)
+
+
+def test_normalize():
+    assert search.normalize("Warp 한글") == search.normalize("warp한글")
+    assert search.normalize("  A  B ") == "ab"
+
+
 def test_codex_body_search_returns_rollout_path(tmp_path):
     projects_dir, codex_dir = _setup(tmp_path)
     with patch.object(models, "PROJECTS_DIR", projects_dir), \

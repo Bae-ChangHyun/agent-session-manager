@@ -236,13 +236,16 @@ class ProjectsPane(Container):
         # Codex body matches are folded in by _build_tree_from_state (they may
         # live outside the cache's SCAN_LIMIT window), so here we only match
         # titles plus Claude body hits over the title cache.
+        from asm.services.search import normalize
+
+        nq = normalize(query)  # whitespace-insensitive, same rule as body search
         claude_ids = self._content_claude_ids
         matches: dict[str, list] = {}
         for path, tagged in self._session_cache.items():
             hit = []
             for ts in tagged:
                 s, source = ts
-                if query in (s.summary or "").casefold():
+                if nq and nq in normalize(s.summary or ""):
                     hit.append(ts)
                 elif source == "claude" and claude_ids and s.session_id in claude_ids:
                     hit.append(ts)
