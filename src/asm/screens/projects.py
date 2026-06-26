@@ -605,12 +605,21 @@ class ProjectsPane(Container):
             source = node_data[3] if len(node_data) > 3 else "claude"
             self._selected_session = (session_id, project_dir, source)
             self._selected_session_node = event.node
+            # The owning project node carries the real working dir, which Claude
+            # needs to resume (`claude -r <id>` only looks in its own project).
+            parent = event.node.parent
+            project_path = (
+                parent.data[1] if parent and parent.data and parent.data[0] == "project" else None
+            )
             self._render_detail_actions(
                 show_trash_session=True,
                 show_remove_config=False,
                 show_move=(source == "codex"),
             )
-            self.run_worker(lambda: self._load_messages(session_id, project_dir, source), thread=True)
+            self.run_worker(
+                lambda: self._load_messages(session_id, project_dir, source, project_path),
+                thread=True,
+            )
         elif kind == "dup_copy":
             session_id = node_data[1]
             project_dir = node_data[2]
@@ -692,24 +701,37 @@ class ProjectsPane(Container):
             detail += f"\n{t('proj.no_sessions_hint')}"
         body.update(detail)
 
-    def _load_messages(self, session_id: str, project_dir: str | None, source: str = "claude") -> None:
+    def _load_messages(self, session_id: str, project_dir: str | None, source: str = "claude",
+                        project_path: str | None = None) -> None:
         if source == "codex":
             from asm.services import codex_data
             messages = codex_data.get_session_messages(session_id, project_dir, limit=50)
+            cwd = None  # Codex resumes by id, no working dir needed
         else:
             messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
-        self.app.call_from_thread(self._show_messages, session_id, messages)
+            # Prefer the real project path; fall back to decoding the dir name.
+            cwd = project_path or (decode_path_hint(project_dir) if project_dir else None)
+        self.app.call_from_thread(self._show_messages, session_id, messages, source, cwd)
 
-    def _show_messages(self, session_id: str, messages: list[dict]) -> None:
+    def _resume_hint(self, session_id: str, source: str, cwd: str | None) -> str:
+        if source == "codex":
+            return f"codex resume {session_id}"
+        return f"cd {cwd or '<project dir>'} && claude -r {session_id}"
+
+    def _show_messages(self, session_id: str, messages: list[dict], source: str = "claude",
+                       cwd: str | None = None) -> None:
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
         header.update(f"[bold]Session:[/] {session_id[:16]}...")
 
+        resume = escape(self._resume_hint(session_id, source, cwd))
+        resume_line = f"[dim]↻ resume:[/] [cyan]{resume}[/]"
+
         if not messages:
-            body.update(t("proj.no_messages"))
+            body.update(f"{resume_line}\n\n{t('proj.no_messages')}")
             return
 
-        lines = []
+        lines = [resume_line, ""]
         for m in messages:
             content = m["content"]
             if m["type"] == "user":

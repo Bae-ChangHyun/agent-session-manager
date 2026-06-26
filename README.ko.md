@@ -144,6 +144,7 @@ asm cost --period weekly          # 모델별·기간별 비용/토큰 통계
 asm projects                      # 전체 프로젝트 (Claude + Codex)
 asm sessions --search "방화벽"     # 세션 제목 검색
 asm preview <session-id>          # 대화 내용 출력
+asm resume <session-id>           # 세션의 프로젝트로 이동해 바로 resume (Claude/Codex)
 asm backup list / asm recovery list
 
 # 변경 — 실행 전 항상 확인을 묻습니다(--yes로 생략). TUI와 동일하게

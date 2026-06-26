@@ -115,3 +115,83 @@ def test_cli_destructive_requires_confirmation(monkeypatch, capsys, tmp_path: Pa
     code, _ = _run(monkeypatch, capsys, "trash", env["session_id"])
     assert code == 1
     assert jsonl.exists()
+
+
+def test_cli_resume_claude_dry_run(monkeypatch, capsys, tmp_path: Path):
+    import os
+    import shutil
+
+    import asm.models as models
+
+    work = tmp_path / "work" / "proj"
+    work.mkdir(parents=True)
+    projects = tmp_path / "projects"
+    enc = models.encode_path(str(work))
+    pdir = projects / enc
+    pdir.mkdir(parents=True)
+    sid = "aaaaaaaa-1111-2222-3333-444444444444"
+    (pdir / f"{sid}.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": str(work), "message": {"content": "hi"}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(models, "PROJECTS_DIR", projects)
+    monkeypatch.setattr(shutil, "which", lambda b: f"/usr/bin/{b}")
+    chdirs: list = []
+    monkeypatch.setattr(os, "chdir", lambda d: chdirs.append(d))
+
+    monkeypatch.setattr(sys, "argv", ["asm", "resume", sid, "--dry-run"])
+    code = 0
+    try:
+        main()
+    except SystemExit as e:
+        code = e.code or 0
+    err = capsys.readouterr().err
+    assert code == 0
+    assert chdirs == [str(work)]  # cd into the recorded cwd
+    assert f"claude -r {sid}" in err
+
+
+def test_cli_resume_codex_dry_run(monkeypatch, capsys, tmp_path: Path):
+    import os
+    import shutil
+
+    from asm.services import codex_data
+
+    sessions = tmp_path / "sessions" / "2026" / "06" / "01"
+    sessions.mkdir(parents=True)
+    sid = "019ddddd-da44-7a72-8b78-912063531fae"
+    cwd = str(tmp_path / "codexwork")
+    (tmp_path / "codexwork").mkdir()
+    (sessions / f"rollout-2026-06-01T09-00-00-{sid}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": sid, "cwd": cwd}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "sessions")
+    codex_data.refresh()
+    monkeypatch.setattr(shutil, "which", lambda b: f"/usr/bin/{b}")
+    chdirs: list = []
+    monkeypatch.setattr(os, "chdir", lambda d: chdirs.append(d))
+    # No Claude projects dir so it falls through to Codex.
+    import asm.models as models
+    monkeypatch.setattr(models, "PROJECTS_DIR", tmp_path / "no-claude")
+
+    monkeypatch.setattr(sys, "argv", ["asm", "resume", sid, "--dry-run"])
+    code = 0
+    try:
+        main()
+    except SystemExit as e:
+        code = e.code or 0
+    err = capsys.readouterr().err
+    assert code == 0
+    assert chdirs == [cwd]
+    assert f"codex resume {sid}" in err
+
+
+def test_cli_resume_not_found(monkeypatch, capsys, tmp_path: Path):
+    import asm.models as models
+    from asm.services import codex_data
+
+    monkeypatch.setattr(models, "PROJECTS_DIR", tmp_path / "none")
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "none2")
+    code, _ = _run(monkeypatch, capsys, "resume", "no-such-id")
+    assert code == 1

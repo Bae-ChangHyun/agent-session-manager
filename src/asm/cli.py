@@ -240,12 +240,21 @@ def cmd_sessions(args) -> int:
         ])
         return 0
     if sys.stdout.isatty():
+        # project before title: a long title would otherwise fold and push the
+        # project column (needed to resume) off-screen. Resume needs the cwd —
+        # `claude -r <id>` only finds a session in its own project directory.
         _print_table(
-            f"{len(rows)} sessions", ["src", "modified", "session id", "title", "project"],
+            f"{len(rows)} sessions", ["src", "modified", "project", "session id", "title"],
             [(
-                _src_cell(src), _fmt_ts(s.last_modified), s.session_id,
-                (s.summary or "").replace("\n", " ")[:80], path,
+                _src_cell(src), _fmt_ts(s.last_modified), path, s.session_id,
+                (s.summary or "").replace("\n", " ")[:60],
             ) for s, src, path in rows],
+        )
+        from rich.console import Console
+        Console().print(
+            "[dim]Resume — Claude: [/][cyan]cd <project> && claude -r <session id>[/]"
+            "[dim]   ·   Codex: [/][cyan]codex resume <session id>[/]"
+            "[dim]  (Claude needs the project dir; Codex resumes by id)[/]"
         )
         return 0
 
@@ -288,6 +297,70 @@ def cmd_preview(args) -> int:
         print(f"--- {role} ---")
         print(m.get("content", ""))
     return 0
+
+
+# ── resume ──────────────────────────────────────────────────────────────
+
+
+def _read_claude_session_cwd(jsonl: Path) -> str | None:
+    """The working dir recorded inside a Claude session JSONL, if any."""
+    try:
+        with open(jsonl) as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(o, dict) and o.get("cwd"):
+                    return o["cwd"]
+    except OSError:
+        pass
+    return None
+
+
+def _exec_resume(argv: list[str], cwd: str | None, dry_run: bool) -> int:
+    """chdir into ``cwd`` and replace this process with ``argv`` (resume)."""
+    import os
+    import shutil
+
+    if shutil.which(argv[0]) is None:
+        print(f"{argv[0]} not found in PATH", file=sys.stderr)
+        return 1
+    if cwd:
+        if not os.path.isdir(cwd):
+            print(f"project dir not found: {cwd}", file=sys.stderr)
+            return 1
+        os.chdir(cwd)
+    print(f"↻ (cwd: {cwd or os.getcwd()})  {' '.join(argv)}", file=sys.stderr)
+    if dry_run:
+        return 0
+    os.execvp(argv[0], argv)  # replaces this process; never returns on success
+    return 1  # only reached if execvp fails
+
+
+def cmd_resume(args) -> int:
+    """Find a session by id, cd into its project, and resume Claude/Codex.
+
+    `claude -r <id>` only finds a session in its own project dir, so we resolve
+    the recorded cwd first. Codex resumes by id (cwd restored from its meta).
+    """
+    from asm.models import PROJECTS_DIR, decode_path_hint
+
+    sid = args.session_id
+
+    enc = _find_claude_project_dir(sid)
+    if enc:
+        cwd = _read_claude_session_cwd(PROJECTS_DIR / enc / f"{sid}.jsonl") or decode_path_hint(enc)
+        return _exec_resume(["claude", "-r", sid], cwd, args.dry_run)
+
+    from asm.services import codex_data
+    if codex_data.is_available():
+        s = codex_data.find_session(sid)
+        if s:
+            return _exec_resume(["codex", "resume", sid], s.cwd or None, args.dry_run)
+
+    print(f"session not found: {sid}", file=sys.stderr)
+    return 1
 
 
 # ── clean ───────────────────────────────────────────────────────────────
@@ -544,6 +617,11 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--limit", type=int, default=50)
     _common(p)
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("resume", help="cd into a session's project and resume it (Claude/Codex)")
+    p.add_argument("session_id")
+    p.add_argument("--dry-run", action="store_true", help="print the command + cwd instead of running it")
+    p.set_defaults(func=cmd_resume)
 
     p = sub.add_parser("clean", help="clean up stale data (trash + recovery snapshot)")
     p.add_argument("target", choices=["empty", "orphaned", "debug", "todos"])
