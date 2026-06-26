@@ -127,6 +127,12 @@ class ProjectsPane(Container):
         self._session_cache_building = False
         self._session_cache_gen = 0
         self._session_match_map: dict[str, list] = {}
+        # Full-text body search: keys of sessions whose conversation contains the
+        # query (Claude session_id + Codex rollout path). None until the debounced
+        # scan lands; the generation counter discards results of superseded queries.
+        self._content_match_keys: set[str] | None = None
+        self._content_search_gen = 0
+        self._content_search_timer = None
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -200,11 +206,13 @@ class ProjectsPane(Container):
         self._build_tree(projects, orphaned_sessions)
 
     def _match_sessions_by_title(self, query: str) -> dict[str, list]:
-        """Map project path -> tagged sessions whose title matches the filter.
+        """Map project path -> tagged sessions matching the filter.
 
-        The title cache is built lazily in a worker on the first query; until
-        it is ready this returns no matches (path filtering still applies) and
-        the tree is rebuilt once the cache lands.
+        Matches a session when the query is in its title *or* (once the
+        debounced full-text scan has landed) in its conversation body. The title
+        cache is built lazily in a worker on the first query; until it is ready
+        this returns no matches (path filtering still applies) and the tree is
+        rebuilt once the cache lands.
         """
         if self._session_cache is None:
             if not self._session_cache_building:
@@ -212,9 +220,18 @@ class ProjectsPane(Container):
                 gen = self._session_cache_gen
                 self.run_worker(lambda: self._build_session_cache(gen), thread=True)
             return {}
+        content = self._content_match_keys
         matches: dict[str, list] = {}
         for path, tagged in self._session_cache.items():
-            hit = [ts for ts in tagged if query in (ts[0].summary or "").casefold()]
+            hit = []
+            for ts in tagged:
+                s, source = ts
+                if query in (s.summary or "").casefold():
+                    hit.append(ts)
+                elif content:
+                    key = s.session_id if source == "claude" else s.project_dir
+                    if key in content:
+                        hit.append(ts)
             if hit:
                 matches[path] = hit
         return matches
@@ -236,6 +253,40 @@ class ProjectsPane(Container):
                 self._build_tree_from_state()
             return
         self._session_cache = cache
+        if self._filter_query:
+            self._build_tree_from_state()
+
+    def _schedule_content_search(self) -> None:
+        """(Re)arm the debounced full-text body scan for the current query.
+
+        Title matching stays instant; the heavier body scan runs in a worker a
+        short moment after typing stops, so fast typing doesn't spawn a scan per
+        keystroke. A blank query just cancels any pending scan.
+        """
+        if self._content_search_timer is not None:
+            self._content_search_timer.stop()
+            self._content_search_timer = None
+        query = self._filter_query
+        if not query:
+            return
+        self._content_search_gen += 1
+        gen = self._content_search_gen
+        self._content_search_timer = self.set_timer(
+            0.3,
+            lambda: self.run_worker(lambda: self._run_content_search(query, gen), thread=True),
+        )
+
+    def _run_content_search(self, query: str, gen: int) -> None:
+        from asm.services import search
+
+        keys = search.search_claude_session_ids(query)
+        keys |= search.search_codex_rollout_paths(query)
+        self.app.call_from_thread(self._on_content_search_ready, keys, gen)
+
+    def _on_content_search_ready(self, keys: set[str], gen: int) -> None:
+        if gen != self._content_search_gen:
+            return  # a newer query superseded this scan
+        self._content_match_keys = keys
         if self._filter_query:
             self._build_tree_from_state()
 
@@ -794,4 +845,8 @@ class ProjectsPane(Container):
         if event.input.id != "projects-filter":
             return
         self._filter_query = event.value.strip()
+        # Drop stale body-scan results and re-arm the debounced full-text search.
+        # Titles still match instantly; body matches fold in when the scan lands.
+        self._content_match_keys = None
+        self._schedule_content_search()
         self._build_tree_from_state()
