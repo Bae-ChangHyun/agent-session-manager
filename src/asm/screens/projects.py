@@ -127,6 +127,15 @@ class ProjectsPane(Container):
         self._session_cache_building = False
         self._session_cache_gen = 0
         self._session_match_map: dict[str, list] = {}
+        # Full-text body search results (None until the debounced scan lands):
+        #  - Claude: session_ids whose JSONL body contains the query.
+        #  - Codex: sessions loaded directly from matching rollout paths, grouped
+        #    by cwd. Loaded outside SCAN_LIMIT so old rollouts still surface.
+        # The generation counter discards results of superseded queries.
+        self._content_claude_ids: set[str] | None = None
+        self._content_codex_by_cwd: dict[str, list] = {}
+        self._content_search_gen = 0
+        self._content_search_timer = None
 
     def on_mount(self) -> None:
         tree = self.query_one("#project-tree", Tree)
@@ -180,11 +189,21 @@ class ProjectsPane(Container):
 
         if query:
             session_matches = self._match_sessions_by_title(query)
+            self._merge_codex_content_matches(session_matches)
             self._session_match_map = session_matches
             projects = [
                 p for p in projects
                 if query in p.path.casefold() or p.path in session_matches
             ]
+            # Codex body hits may belong to a working dir not in the project list
+            # (e.g. an old cwd beyond the recent scan). Add a node so they show.
+            shown = {p.path for p in projects}
+            for cwd in self._content_codex_by_cwd:
+                if cwd in session_matches and cwd not in shown:
+                    projects.append(
+                        ProjectInfo(path=cwd, exists=Path(cwd).exists() if cwd else False)
+                    )
+                    shown.add(cwd)
             orphaned_sessions = [
                 s for s in orphaned_sessions
                 if query in s.dir_name.casefold() or query in PurePath(s.actual_path).name.casefold()
@@ -200,11 +219,13 @@ class ProjectsPane(Container):
         self._build_tree(projects, orphaned_sessions)
 
     def _match_sessions_by_title(self, query: str) -> dict[str, list]:
-        """Map project path -> tagged sessions whose title matches the filter.
+        """Map project path -> tagged sessions matching the filter.
 
-        The title cache is built lazily in a worker on the first query; until
-        it is ready this returns no matches (path filtering still applies) and
-        the tree is rebuilt once the cache lands.
+        Matches a session when the query is in its title *or* (once the
+        debounced full-text scan has landed) in its conversation body. The title
+        cache is built lazily in a worker on the first query; until it is ready
+        this returns no matches (path filtering still applies) and the tree is
+        rebuilt once the cache lands.
         """
         if self._session_cache is None:
             if not self._session_cache_building:
@@ -212,12 +233,39 @@ class ProjectsPane(Container):
                 gen = self._session_cache_gen
                 self.run_worker(lambda: self._build_session_cache(gen), thread=True)
             return {}
+        # Codex body matches are folded in by _build_tree_from_state (they may
+        # live outside the cache's SCAN_LIMIT window), so here we only match
+        # titles plus Claude body hits over the title cache.
+        claude_ids = self._content_claude_ids
         matches: dict[str, list] = {}
         for path, tagged in self._session_cache.items():
-            hit = [ts for ts in tagged if query in (ts[0].summary or "").casefold()]
+            hit = []
+            for ts in tagged:
+                s, source = ts
+                if query in (s.summary or "").casefold():
+                    hit.append(ts)
+                elif source == "claude" and claude_ids and s.session_id in claude_ids:
+                    hit.append(ts)
             if hit:
                 matches[path] = hit
         return matches
+
+    def _merge_codex_content_matches(self, matches: dict[str, list]) -> None:
+        """Fold Codex body-search hits into ``matches`` (path -> tagged sessions).
+
+        These are loaded outside SCAN_LIMIT, so they may not be in the title
+        cache; de-dupe by session id against whatever the title pass already
+        added for the same working dir.
+        """
+        for cwd, tagged in self._content_codex_by_cwd.items():
+            existing = matches.setdefault(cwd, [])
+            seen = {t[0].session_id for t in existing}
+            for ts in tagged:
+                if ts[0].session_id not in seen:
+                    existing.append(ts)
+                    seen.add(ts[0].session_id)
+            if not existing:
+                del matches[cwd]
 
     def _build_session_cache(self, gen: int) -> None:
         cache: dict[str, list] = {}
@@ -236,6 +284,47 @@ class ProjectsPane(Container):
                 self._build_tree_from_state()
             return
         self._session_cache = cache
+        if self._filter_query:
+            self._build_tree_from_state()
+
+    def _schedule_content_search(self) -> None:
+        """(Re)arm the debounced full-text body scan for the current query.
+
+        Title matching stays instant; the heavier body scan runs in a worker a
+        short moment after typing stops, so fast typing doesn't spawn a scan per
+        keystroke. A blank query just cancels any pending scan.
+        """
+        if self._content_search_timer is not None:
+            self._content_search_timer.stop()
+            self._content_search_timer = None
+        query = self._filter_query
+        if not query:
+            return
+        self._content_search_gen += 1
+        gen = self._content_search_gen
+        self._content_search_timer = self.set_timer(
+            0.3,
+            lambda: self.run_worker(lambda: self._run_content_search(query, gen), thread=True),
+        )
+
+    def _run_content_search(self, query: str, gen: int) -> None:
+        from asm.services import codex_data, search
+
+        claude_ids = search.search_claude_session_ids(query)
+        # Codex rollouts are global; load every body match straight from disk so
+        # hits older than SCAN_LIMIT still appear, then group by working dir.
+        codex_paths = search.search_codex_rollout_paths(query)
+        codex_by_cwd: dict[str, list] = {}
+        if codex_paths:
+            for s in codex_data.get_sessions_by_paths(codex_paths):
+                codex_by_cwd.setdefault(s.cwd, []).append((s, "codex"))
+        self.app.call_from_thread(self._on_content_search_ready, claude_ids, codex_by_cwd, gen)
+
+    def _on_content_search_ready(self, claude_ids: set[str], codex_by_cwd: dict[str, list], gen: int) -> None:
+        if gen != self._content_search_gen:
+            return  # a newer query superseded this scan
+        self._content_claude_ids = claude_ids
+        self._content_codex_by_cwd = codex_by_cwd
         if self._filter_query:
             self._build_tree_from_state()
 
@@ -417,7 +506,13 @@ class ProjectsPane(Container):
         encoded = encode_path(p.path)
         session_dir = PROJECTS_DIR / encoded
         session_count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
-        has_codex = p.path in self._codex_paths
+        matched_sessions = self._session_match_map.get(p.path)
+        # A full-text body search can surface Codex sessions for a working dir
+        # that isn't in the recent-scan project list, so treat any matched-but-
+        # Codex hit as evidence this node has Codex sessions to expand.
+        has_codex = p.path in self._codex_paths or (
+            bool(matched_sessions) and any(src == "codex" for _, src in matched_sessions)
+        )
         # Source markers: C if it has Claude sessions, X if it has Codex sessions.
         marks = ""
         if session_count > 0:
@@ -428,9 +523,7 @@ class ProjectsPane(Container):
         session_str = f"  [dim]{session_count} sessions[/]" if session_count > 0 else ""
 
         label = f"{status} {display_name}{marks_str}{session_str}"
-        expandable = session_count > 0 or has_codex
-
-        matched_sessions = self._session_match_map.get(p.path)
+        expandable = session_count > 0 or has_codex or bool(matched_sessions)
         if expandable or child_dirs:
             node = parent.add(label, data=("project", p.path), expand=bool(matched_sessions))
             if matched_sessions:
@@ -794,4 +887,9 @@ class ProjectsPane(Container):
         if event.input.id != "projects-filter":
             return
         self._filter_query = event.value.strip()
+        # Drop stale body-scan results and re-arm the debounced full-text search.
+        # Titles still match instantly; body matches fold in when the scan lands.
+        self._content_claude_ids = None
+        self._content_codex_by_cwd = {}
+        self._schedule_content_search()
         self._build_tree_from_state()
