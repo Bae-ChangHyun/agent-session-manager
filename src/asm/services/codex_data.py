@@ -214,6 +214,19 @@ def get_sessions_by_paths(paths) -> list[SessionDetail]:
     return result
 
 
+def find_session(session_id: str) -> SessionDetail | None:
+    """Locate one Codex session by id (full scan, ignoring SCAN_LIMIT).
+
+    Returns its SessionDetail (carrying ``cwd`` and the rollout ``project_dir``)
+    or None if no rollout matches.
+    """
+    f = _find_rollout(session_id)
+    if f is None:
+        return None
+    info = _scan_session(f)
+    return _detail_from_info(info) if info is not None else None
+
+
 def get_session_messages(session_id: str, project_dir: str | None = None, limit: int = 50) -> list[dict]:
     """Read user/assistant messages from a Codex rollout file.
 

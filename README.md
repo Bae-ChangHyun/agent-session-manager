@@ -145,6 +145,7 @@ asm cost --period weekly          # Cost/token stats per model & period
 asm projects                      # All projects (Claude + Codex)
 asm sessions --search "firewall"  # Search sessions by title
 asm preview <session-id>          # Print a conversation
+asm resume <session-id>           # cd into its project & resume (Claude/Codex)
 asm backup list / asm recovery list
 
 # Destructive — always confirms first (skip with --yes); everything goes
