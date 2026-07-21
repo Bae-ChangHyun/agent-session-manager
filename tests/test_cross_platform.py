@@ -106,7 +106,7 @@ class TestDirSize:
         (tmp_path / "a.txt").write_text("hello")
         (tmp_path / "b.txt").write_text("world")
 
-        with patch("asm.services.claude_data.sys") as mock_sys:
+        with patch("asm.utils.sys") as mock_sys:
             mock_sys.platform = "win32"
             from asm.services.claude_data import _dir_size
 

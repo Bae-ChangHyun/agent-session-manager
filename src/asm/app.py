@@ -63,6 +63,9 @@ class CCTuiApp(App):
         # Initial dashboard source filter (all | claude | codex). Both sources
         # are always loaded; this only sets the dashboard's starting view.
         self.source = source
+        # Set by ProjectsPane's resume action just before exit; __main__ then
+        # execs the resume command in the session's project dir.
+        self.resume_target: tuple[str, str, str | None] | None = None
 
     @property
     def target_encoded(self) -> str | None:

@@ -90,6 +90,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "proj.config_fail": {"en": "Remove failed", "ko": "제거 실패"},
     "proj.no_dir_info": {"en": "No project directory info", "ko": "프로젝트 디렉토리 정보 없음"},
     "proj.no_messages": {"en": "[dim]No conversation messages found[/]", "ko": "[dim]대화 메시지 없음[/]"},
+    "proj.resume_key_hint": {"en": "press o to resume now", "ko": "o 키로 바로 이어가기"},
+    "proj.resume_select_first": {
+        "en": "Select a session first (Enter to preview), then press o to resume",
+        "ko": "먼저 세션을 선택(Enter로 미리보기)한 뒤 o 키로 이어가세요",
+    },
     "proj.btn_trash_orphaned": {"en": "Trash Orphaned Sessions ({count})", "ko": "Orphaned 세션 삭제 ({count})"},
     "proj.confirm_trash_orphaned": {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",

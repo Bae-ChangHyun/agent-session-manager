@@ -248,11 +248,13 @@ class DashboardPane(Container):
             return
 
         from asm.services import pricing
+        # Claude's per-day history counts prompts; Codex counts sessions.
+        unit = {"claude": "prompts", "codex": "sessions"}.get(self._source, "prompts+sessions")
         self.query_one("#dash-header", Static).update(
             f"{self._source_filter_line()}\n"
             f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
             f"{usage['num_startups']} startups  |  "
-            f"{usage['total_sessions_ever']} total sessions  |  "
+            f"{usage['total_sessions_ever']} total {unit}  |  "
             f"rates: {pricing.rates_source()}[/]"
         )
         self.query_one("#dash-div-1", Static).update("─" * 70)
@@ -272,6 +274,12 @@ class DashboardPane(Container):
                 f"In:{_fmt_tokens(mt['inputTokens']):>6s}  "
                 f"Out:{_fmt_tokens(mt['outputTokens']):>6s}  "
                 f"Cache:{_fmt_tokens(mt['cacheReadInputTokens']):>7s}"
+            )
+        from asm.services.codex_data import UNKNOWN_MODEL
+        if UNKNOWN_MODEL in usage["model_totals"]:
+            model_lines.append(
+                f"  [dim]{UNKNOWN_MODEL} = session file records no model id; "
+                f"priced at the default GPT tier[/]"
             )
         self.query_one("#dash-model-table", Static).update("\n".join(model_lines))
         self.query_one("#dash-div-2", Static).update("─" * 70)

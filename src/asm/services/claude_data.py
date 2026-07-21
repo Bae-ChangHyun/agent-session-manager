@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,6 +21,7 @@ _SDK_FALLBACK_EXCEPTIONS = (
 
 
 from asm.utils import RECENT_DAYS_LIMIT, SUMMARY_MAX_CHARS, TOP_PROJECT_LIMIT
+from asm.utils import dir_size as _dir_size
 
 from asm.models import (
     CLAUDE_DIR,
@@ -42,35 +42,6 @@ from asm.models import (
     decode_path_hint,
     encode_path,
 )
-
-
-def _dir_size(path: Path) -> int:
-    """Calculate total size of a directory.
-
-    Uses ``du -sb`` on Linux for speed, falls back to pure-Python walk
-    on Windows / macOS / when the command fails. (macOS ``du`` has no ``-b``,
-    so it's excluded to avoid a failing subprocess per directory.)
-    """
-    if sys.platform == "linux":
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["du", "-sb", "--", str(path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                return int(result.stdout.split()[0])
-        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
-            pass
-    # Pure-Python fallback (Windows, macOS, or du failure)
-    total = 0
-    try:
-        for entry in path.rglob("*"):
-            if entry.is_file():
-                total += entry.stat().st_size
-    except (PermissionError, OSError):
-        pass
-    return total
 
 
 def _file_count(path: Path) -> int:

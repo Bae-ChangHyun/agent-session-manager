@@ -1,8 +1,8 @@
 """Model pricing for cost estimation.
 
 Rates come from LiteLLM's pricing database (https://github.com/BerriAI/litellm),
-fetched live by ``load_live_rates()`` (cached daily under ~/.asm) so new models
-are priced correctly without a release. The bundled table below is the offline
+fetched live by ``load_live_rates()`` (15-minute cache under ~/.asm) so new
+models are priced correctly without a release. The bundled table below is the offline
 fallback and the tier-estimate source for models absent from the live DB; the
 active source is always reported via ``rates_source()``.
 
@@ -53,7 +53,7 @@ _LITELLM_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/"
     "model_prices_and_context_window.json"
 )
-CACHE_MAX_AGE_SECONDS = 24 * 3600
+CACHE_MAX_AGE_SECONDS = 15 * 60
 _FETCH_TIMEOUT = 3.0
 
 _live_db: dict[str, dict] | None = None
@@ -78,9 +78,9 @@ def _relevant_entry(key: str) -> bool:
 def load_live_rates(force: bool = False) -> str:
     """Load current per-model rates from LiteLLM into module state.
 
-    Uses a daily on-disk cache; when the fetch fails, a stale cache still beats
-    the bundled table. Returns (and records) the provenance string shown in the
-    dashboard / CLI so the user always sees which source priced their data.
+    Uses a 15-minute on-disk cache; when the fetch fails, a stale cache still
+    beats the bundled table. Returns (and records) the provenance string shown
+    in the dashboard / CLI so the user always sees which source priced their data.
     """
     global _live_db, _rates_source
     if _live_db is not None and not force:
@@ -94,7 +94,7 @@ def load_live_rates(force: bool = False) -> str:
     if age is not None and age < CACHE_MAX_AGE_SECONDS and not force:
         try:
             _live_db = json.loads(cache.read_text())
-            _rates_source = f"LiteLLM (cached {max(int(age // 3600), 0)}h ago)"
+            _rates_source = f"LiteLLM (cached {max(int(age // 60), 0)}m ago)"
             return _rates_source
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Unreadable pricing cache %s: %s", cache, exc)

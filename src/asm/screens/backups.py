@@ -7,6 +7,8 @@ from textual.containers import Container, Vertical
 from textual.widgets import DataTable, Input, Static
 
 from asm.i18n import t
+from asm.models import CLAUDE_DIR, CODEX_SESSIONS_DIR, PLUGINS_DIR, PROJECTS_DIR, SKILLS_DIR
+from asm.utils import dir_size
 from asm.screens.confirm import ConfirmScreen
 from asm.services.backup import (
     create_codex_backup,
@@ -372,7 +374,7 @@ class BackupsPane(Container):
             self.run_worker(self._do_config_backup, thread=True)
         elif action_id == "full-backup":
             self.app.push_screen(
-                ConfirmScreen(t("bak.confirm_full")),
+                ConfirmScreen(t("bak.confirm_full") + self._size_note(CLAUDE_DIR)),
                 callback=lambda ok: self.run_worker(self._do_full_backup, thread=True)
                 if ok
                 else None,
@@ -386,21 +388,21 @@ class BackupsPane(Container):
             )
         elif action_id == "plugins-backup":
             self.app.push_screen(
-                ConfirmScreen(t("bak.confirm_plugins")),
+                ConfirmScreen(t("bak.confirm_plugins") + self._size_note(PLUGINS_DIR, SKILLS_DIR)),
                 callback=lambda ok: self.run_worker(self._do_plugins_backup, thread=True)
                 if ok
                 else None,
             )
         elif action_id == "sessions-backup":
             self.app.push_screen(
-                ConfirmScreen(t("bak.confirm_sessions")),
+                ConfirmScreen(t("bak.confirm_sessions") + self._size_note(PROJECTS_DIR)),
                 callback=lambda ok: self.run_worker(self._do_sessions_backup, thread=True)
                 if ok
                 else None,
             )
         elif action_id == "codex-backup":
             self.app.push_screen(
-                ConfirmScreen(t("bak.confirm_codex")),
+                ConfirmScreen(t("bak.confirm_codex") + self._size_note(CODEX_SESSIONS_DIR)),
                 callback=lambda ok: self.run_worker(self._do_codex_backup, thread=True)
                 if ok
                 else None,
@@ -419,6 +421,10 @@ class BackupsPane(Container):
             self._click_restore_recovery(overwrite=True)
         elif action_id == "delete-recovery":
             self._click_delete_recovery()
+
+    def _size_note(self, *paths) -> str:
+        total = sum(dir_size(p) for p in paths if p.exists())
+        return f"\n\n~{format_bytes(total)} will be copied."
 
     # ── Create workers ───────────────────────────────────────
 

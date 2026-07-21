@@ -51,7 +51,7 @@ same view filtered to **Claude** and to **Codex**:
 - **Cost across both agents** with a source filter — **click** `All / Claude / Codex` or press `s`
 - Per-model token & cost breakdown (Opus / Sonnet / Haiku / GPT-5.x), each row tagged by source
 - Daily / weekly / monthly usage tables (one scan, all periods) and a Top-10 project cost chart
-- Accurate, current pricing from a LiteLLM-sourced rate table (Claude 5 family, new Opus, and GPT-5.x priced correctly, not at stale rates)
+- Accurate pricing fetched **live from LiteLLM** (15-min cache, offline fallback to the bundled table) — new models are priced correctly without waiting for a release, and the dashboard always shows which rate source was used
 
 ### Unified sessions (Claude + Codex)
 - One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**
@@ -93,7 +93,7 @@ same view filtered to **Claude** and to **Codex**:
 
 - **TUI:** [Textual](https://github.com/Textualize/textual) + [Rich](https://github.com/Textualize/rich)
 - **Safety:** [send2trash](https://github.com/arsenetar/send2trash) (OS trash, not `rm`)
-- **Sessions:** [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) with a JSONL fallback parser
+- **Sessions:** built-in JSONL parser — no heavy deps; optional [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) via `pip install 'agent-session-manager[sdk]'`
 - **Python:** 3.11+
 
 ---

@@ -159,6 +159,11 @@ def cmd_cost(args) -> int:
                  for m, mt in sorted(data["model_totals"].items(), key=lambda x: -x[1]["costUSD"])],
                 justify=num,
             )
+            if codex_data.UNKNOWN_MODEL in data["model_totals"]:
+                console.print(
+                    f"[dim]{codex_data.UNKNOWN_MODEL} = session file records no model id; "
+                    f"priced at the default GPT tier[/]"
+                )
             _print_table(
                 args.period, ["period", "cost", "input", "output", "msgs"],
                 [(r["period"], f"${r['total_cost']:,.2f}", f"{r['total_input']:,}",
@@ -266,9 +271,8 @@ def cmd_sessions(args) -> int:
         )
         from rich.console import Console
         Console().print(
-            "[dim]Resume — Claude: [/][cyan]cd <project> && claude -r <session id>[/]"
-            "[dim]   ·   Codex: [/][cyan]codex resume <session id>[/]"
-            "[dim]  (Claude needs the project dir; Codex resumes by id)[/]"
+            "[dim]Resume any session: [/][cyan]asm resume <session id>[/]"
+            "[dim]  (cds into its project automatically; Claude and Codex)[/]"
         )
         return 0
 
@@ -448,6 +452,35 @@ _BACKUP_CREATORS = {
     "codex": "create_codex_backup",
 }
 
+def _backup_source_dirs_full():
+    from asm.models import CLAUDE_DIR
+    return [CLAUDE_DIR]
+
+
+def _backup_source_dirs_sessions():
+    from asm.models import PROJECTS_DIR
+    return [PROJECTS_DIR]
+
+
+def _backup_source_dirs_plugins():
+    from asm.models import PLUGINS_DIR, SKILLS_DIR
+    return [PLUGINS_DIR, SKILLS_DIR]
+
+
+def _backup_source_dirs_codex():
+    from asm.models import CODEX_SESSIONS_DIR
+    return [CODEX_SESSIONS_DIR]
+
+
+# Directory-based backup types copy whole trees (possibly GBs) — the create
+# path sizes the source up front and confirms. config/settings copy tiny files.
+_BACKUP_SOURCE_DIRS = {
+    "full": _backup_source_dirs_full,
+    "sessions": _backup_source_dirs_sessions,
+    "plugins": _backup_source_dirs_plugins,
+    "codex": _backup_source_dirs_codex,
+}
+
 _BACKUP_RESTORERS = {
     "config": "restore_config_backup",
     "full": "restore_full_backup",
@@ -479,6 +512,15 @@ def cmd_backup(args) -> int:
         return 0
 
     if args.action == "create":
+        source_dirs = _BACKUP_SOURCE_DIRS.get(args.type)
+        if source_dirs:
+            from asm.utils import dir_size
+
+            total = sum(dir_size(d) for d in source_dirs() if d.exists())
+            if not _confirm(
+                f"Create {args.type} backup (~{format_bytes(total)} will be copied)?", args.yes
+            ):
+                return 1
         path = getattr(backup, _BACKUP_CREATORS[args.type])()
         if path:
             print(path)

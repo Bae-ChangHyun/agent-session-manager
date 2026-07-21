@@ -337,3 +337,19 @@ class TestDashboardPeriodAndEditor:
                 assert saved == [True]
 
         asyncio.run(run())
+
+
+def test_projects_resume_action_sets_target_and_exits(monkeypatch, tmp_path):
+    _setup_fake_claude(monkeypatch, tmp_path)
+
+    async def run():
+        app = CCTuiApp()
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            pane = app.query_one("ProjectsPane")
+            pane._preview_target = ("sid-1", "claude", "/work/proj")
+            pane.action_resume_session()
+            await pilot.pause()
+        assert app.resume_target == ("sid-1", "claude", "/work/proj")
+
+    asyncio.run(run())

@@ -50,7 +50,7 @@
 - **두 에이전트 합산 비용** + 소스 필터 — `All / Claude / Codex` **클릭** 또는 `s` 키
 - 모델별 토큰·비용 (Opus / Sonnet / Haiku / GPT-5.x), 각 행을 소스 태그로 구분
 - 일별 / 주별 / 월별 사용량 표(한 번 스캔으로 전부), 프로젝트 비용 Top 10 차트
-- LiteLLM 기반 단가 테이블로 정확한 최신 가격 (Claude 5 계열·신규 Opus·GPT-5.x 모두 옛 단가가 아닌 현재 단가로 계산)
+- **LiteLLM에서 실시간으로 받아오는** 정확한 단가 (15분 캐시, 오프라인 시 내장 테이블 폴백) — 신모델도 릴리스를 기다리지 않고 바로 정확하게 계산되고, 어떤 단가 출처를 썼는지 대시보드에 항상 표시
 
 ### 통합 세션 (Claude + Codex)
 - 한 트리에 Claude 프로젝트와 Codex 작업 디렉토리를 함께, 각 세션을 **C** / **X**로 구분
@@ -92,7 +92,7 @@
 
 - **TUI:** [Textual](https://github.com/Textualize/textual) + [Rich](https://github.com/Textualize/rich)
 - **안전장치:** [send2trash](https://github.com/arsenetar/send2trash) (`rm`이 아닌 OS 휴지통)
-- **세션:** [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) + JSONL 폴백 파서
+- **세션:** 내장 JSONL 파서 — 무거운 의존성 없음; 필요 시 [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/)를 `pip install 'agent-session-manager[sdk]'`로 추가
 - **Python:** 3.11+
 
 ---

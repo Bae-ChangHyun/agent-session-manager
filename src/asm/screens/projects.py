@@ -39,6 +39,7 @@ class ProjectsPane(Container):
         ("d", "trash_session", "Trash Session"),
         ("D", "trash_orphaned", "Trash Orphaned"),
         ("x", "remove_config", "Remove Config"),
+        ("o", "resume_session", "Resume"),
     ]
 
     CSS = """
@@ -713,10 +714,14 @@ class ProjectsPane(Container):
             cwd = project_path or (decode_path_hint(project_dir) if project_dir else None)
         self.app.call_from_thread(self._show_messages, session_id, messages, source, cwd)
 
-    def _resume_hint(self, session_id: str, source: str, cwd: str | None) -> str:
-        if source == "codex":
-            return f"codex resume {session_id}"
-        return f"cd {cwd or '<project dir>'} && claude -r {session_id}"
+    def action_resume_session(self) -> None:
+        """Quit the TUI and resume the previewed session in its project dir."""
+        target = getattr(self, "_preview_target", None)
+        if not target:
+            self.app.notify(t("proj.resume_select_first"), severity="warning")
+            return
+        self.app.resume_target = target
+        self.app.exit()
 
     def _show_messages(self, session_id: str, messages: list[dict], source: str = "claude",
                        cwd: str | None = None) -> None:
@@ -724,8 +729,11 @@ class ProjectsPane(Container):
         body = self.query_one("#project-detail-body", Static)
         header.update(f"[bold]Session:[/] {session_id[:16]}...")
 
-        resume = escape(self._resume_hint(session_id, source, cwd))
-        resume_line = f"[dim]↻ resume:[/] [cyan]{resume}[/]"
+        self._preview_target = (session_id, source, cwd)
+        resume_line = (
+            f"[dim]↻ resume:[/] [cyan]asm resume {escape(session_id)}[/]"
+            f"  [dim]({t('proj.resume_key_hint')})[/]"
+        )
 
         if not messages:
             body.update(f"{resume_line}\n\n{t('proj.no_messages')}")

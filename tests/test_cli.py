@@ -242,3 +242,13 @@ def test_cli_trash_codex_session_beyond_scan_window(monkeypatch, capsys, tmp_pat
     code, out = _run(monkeypatch, capsys, "trash", "cccc", "--yes")
     assert code == 0
     assert not rollout.exists()
+
+
+def test_cli_backup_create_full_confirms_with_size(monkeypatch, capsys, tmp_path: Path):
+    _setup_fake_claude(monkeypatch, tmp_path)
+    monkeypatch.setattr("builtins.input", lambda *_: "n")
+    code, _ = _run(monkeypatch, capsys, "backup", "create", "--type", "full")
+    assert code == 1
+    code, out = _run(monkeypatch, capsys, "backup", "create", "--type", "full", "--yes")
+    assert code == 0
+    assert Path(out.strip()).exists()
