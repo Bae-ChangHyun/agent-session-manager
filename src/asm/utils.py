@@ -1,4 +1,10 @@
-"""Shared utility functions for asm."""
+"""Shared utility functions and display limits for asm."""
+
+# Shared display caps (dashboard + CLI aggregate the same service data).
+TOP_PROJECT_LIMIT = 15       # rows kept in the per-project cost ranking
+TOP_PROJECT_CHART_ROWS = 10  # rows actually rendered in the cost chart/tables
+RECENT_DAYS_LIMIT = 14       # days kept in sessions-per-day
+SUMMARY_MAX_CHARS = 120      # session title/first-prompt truncation
 
 
 def format_bytes(size: int) -> str:

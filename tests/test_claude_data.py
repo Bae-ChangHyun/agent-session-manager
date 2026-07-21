@@ -149,3 +149,21 @@ class TestPricing:
         assert calc_cost(usage, "claude-opus-9-0") == 5.0
         assert is_billable("claude-opus-4-8")
         assert not is_billable("<synthetic>")
+
+    def test_claude5_family_rates(self):
+        from asm.services.pricing import calc_cost, display_model
+
+        inp = {"input_tokens": 1_000_000}
+        assert calc_cost(inp, "claude-fable-5") == 10.0
+        assert calc_cost(inp, "claude-fable-5-20260601") == 10.0
+        assert calc_cost(inp, "claude-mythos-5") == 10.0
+        assert calc_cost(inp, "claude-sonnet-5") == 2.0
+        # Unknown future fable/mythos falls to the fable tier, not sonnet.
+        assert calc_cost(inp, "claude-fable-6") == 10.0
+        out = {"output_tokens": 1_000_000}
+        assert calc_cost(out, "claude-fable-5") == 50.0
+        cache = {"cache_read_input_tokens": 1_000_000}
+        assert calc_cost(cache, "claude-fable-5") == 1.0
+        # Display names strip date suffixes so model tables stay uniform.
+        assert display_model("claude-haiku-4-5-20251001") == "claude-haiku-4-5"
+        assert display_model("claude-opus-4-6[1m]") == "claude-opus-4-6"

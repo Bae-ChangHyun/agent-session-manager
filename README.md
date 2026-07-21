@@ -51,7 +51,7 @@ same view filtered to **Claude** and to **Codex**:
 - **Cost across both agents** with a source filter — **click** `All / Claude / Codex` or press `s`
 - Per-model token & cost breakdown (Opus / Sonnet / Haiku / GPT-5.x), each row tagged by source
 - Daily / weekly / monthly usage tables (one scan, all periods) and a Top-10 project cost chart
-- Accurate, current pricing from a LiteLLM-sourced rate table (new Opus/GPT models priced correctly, not at stale rates)
+- Accurate, current pricing from a LiteLLM-sourced rate table (Claude 5 family, new Opus, and GPT-5.x priced correctly, not at stale rates)
 
 ### Unified sessions (Claude + Codex)
 - One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**

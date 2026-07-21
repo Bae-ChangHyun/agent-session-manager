@@ -1,21 +1,31 @@
 """Model pricing for cost estimation.
 
-Per-million-token USD rates, sourced from LiteLLM's pricing database
-(https://github.com/BerriAI/litellm — the same source tools like tokscale use).
+Rates come from LiteLLM's pricing database (https://github.com/BerriAI/litellm),
+fetched live by ``load_live_rates()`` (cached daily under ~/.asm) so new models
+are priced correctly without a release. The bundled table below is the offline
+fallback and the tier-estimate source for models absent from the live DB; the
+active source is always reported via ``rates_source()``.
 
-Rather than guessing a tier from the model name (which silently mispriced newer
-Opus releases as the old, 3x-more-expensive Opus 4.0/4.1), we keep an explicit
-per-model table and fall back to a tier estimate only for unknown models. New
-Opus releases default to the *current* (cheaper) Opus pricing, not the legacy one.
+Callers must invoke ``load_live_rates()`` explicitly (CLI/TUI entry points do);
+imports never touch the network, so tests and library use stay deterministic.
 """
 
 from __future__ import annotations
+
+import json
+import logging
+import time
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Per-1M-token rates: (input, output, cache_read, cache_create) in USD.
 _OPUS_LEGACY = (15.0, 75.0, 1.50, 18.75)   # opus 4.0 / 4.1 / opus-3
 _OPUS = (5.0, 25.0, 0.50, 6.25)            # opus 4.5+
 _SONNET = (3.0, 15.0, 0.30, 3.75)          # sonnet 4.x / 3.x
+_SONNET_5 = (2.0, 10.0, 0.20, 2.50)        # sonnet 5
 _HAIKU = (1.0, 5.0, 0.10, 1.25)            # haiku 4.x / 3.5
+_FABLE = (10.0, 50.0, 1.00, 12.50)         # fable/mythos 5
 
 # Exact per-model rates (keyed by the model id with the date suffix stripped).
 _RATES: dict[str, tuple[float, float, float, float]] = {
@@ -27,11 +37,129 @@ _RATES: dict[str, tuple[float, float, float, float]] = {
     "claude-opus-4-8": _OPUS,
     "claude-sonnet-4-5": _SONNET,
     "claude-sonnet-4-6": _SONNET,
+    "claude-sonnet-5": _SONNET_5,
     "claude-haiku-4-5": _HAIKU,
+    "claude-fable-5": _FABLE,
+    "claude-mythos-5": _FABLE,
 }
 
 # Opus releases that still carry the old, expensive pricing.
 _LEGACY_OPUS_MARKERS = ("opus-4-0", "opus-4-1", "opus-3")
+
+
+# --- Live rates (LiteLLM) ----------------------------------------------------
+
+_LITELLM_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+    "model_prices_and_context_window.json"
+)
+CACHE_MAX_AGE_SECONDS = 24 * 3600
+_FETCH_TIMEOUT = 3.0
+
+_live_db: dict[str, dict] | None = None
+_rates_source = "bundled table"
+
+
+def _cache_path() -> Path:
+    from asm import models
+    return models.APP_DATA_DIR / "pricing-cache.json"
+
+
+def rates_source() -> str:
+    """Human-readable provenance of the rates currently in use."""
+    return _rates_source
+
+
+def _relevant_entry(key: str) -> bool:
+    k = key.lower()
+    return "claude" in k or k.startswith("gpt-") or k.startswith("openai/gpt-")
+
+
+def load_live_rates(force: bool = False) -> str:
+    """Load current per-model rates from LiteLLM into module state.
+
+    Uses a daily on-disk cache; when the fetch fails, a stale cache still beats
+    the bundled table. Returns (and records) the provenance string shown in the
+    dashboard / CLI so the user always sees which source priced their data.
+    """
+    global _live_db, _rates_source
+    if _live_db is not None and not force:
+        return _rates_source
+
+    cache = _cache_path()
+    try:
+        age = time.time() - cache.stat().st_mtime
+    except OSError:
+        age = None
+    if age is not None and age < CACHE_MAX_AGE_SECONDS and not force:
+        try:
+            _live_db = json.loads(cache.read_text())
+            _rates_source = f"LiteLLM (cached {max(int(age // 3600), 0)}h ago)"
+            return _rates_source
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Unreadable pricing cache %s: %s", cache, exc)
+
+    try:
+        import urllib.request
+        with urllib.request.urlopen(_LITELLM_URL, timeout=_FETCH_TIMEOUT) as resp:
+            full = json.loads(resp.read().decode("utf-8"))
+        _live_db = {k: v for k, v in full.items() if _relevant_entry(k) and isinstance(v, dict)}
+        _rates_source = "LiteLLM (live)"
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(_live_db))
+        except OSError as exc:
+            logger.warning("Failed to write pricing cache %s: %s", cache, exc)
+        return _rates_source
+    except (OSError, ValueError) as exc:
+        logger.warning("Live pricing fetch failed: %s", exc)
+
+    if cache.exists():
+        try:
+            _live_db = json.loads(cache.read_text())
+            _rates_source = "LiteLLM (stale cache, offline)"
+            return _rates_source
+        except (OSError, json.JSONDecodeError):
+            pass
+    _live_db = {}
+    _rates_source = "bundled table (LiteLLM unreachable)"
+    return _rates_source
+
+
+def _live_lookup(keys: tuple[str, ...]) -> dict | None:
+    if not _live_db:
+        return None
+    for key in keys:
+        entry = _live_db.get(key)
+        if (
+            isinstance(entry, dict)
+            and "input_cost_per_token" in entry
+            and "output_cost_per_token" in entry
+        ):
+            return entry
+    return None
+
+
+def _live_claude_rates(name: str) -> tuple[float, float, float, float] | None:
+    entry = _live_lookup((name, f"anthropic/{name}", f"anthropic.{name}"))
+    if entry is None:
+        return None
+    inp = entry["input_cost_per_token"]
+    out = entry["output_cost_per_token"]
+    # Anthropic's standard multipliers when LiteLLM omits the cache fields.
+    cache_read = entry.get("cache_read_input_token_cost", inp * 0.1)
+    cache_create = entry.get("cache_creation_input_token_cost", inp * 1.25)
+    return (inp * 1e6, out * 1e6, cache_read * 1e6, cache_create * 1e6)
+
+
+def _live_openai_rates(name: str) -> tuple[float, float, float] | None:
+    entry = _live_lookup((name, f"openai/{name}"))
+    if entry is None:
+        return None
+    inp = entry["input_cost_per_token"]
+    out = entry["output_cost_per_token"]
+    cached = entry.get("cache_read_input_token_cost", inp * 0.1)
+    return (inp * 1e6, out * 1e6, cached * 1e6)
 
 
 def _normalize(model: str) -> str:
@@ -51,14 +179,24 @@ def _normalize(model: str) -> str:
 def _rates_for(model: str) -> tuple[float, float, float, float]:
     """Return (input, output, cache_read, cache_create) per-1M rates for a model."""
     name = _normalize(model)
+    live = _live_claude_rates(name)
+    if live is not None:
+        return live
     if name in _RATES:
         return _RATES[name]
     # Fallback by family for unknown / future models.
     if "opus" in name:
         return _OPUS_LEGACY if any(m in name for m in _LEGACY_OPUS_MARKERS) else _OPUS
+    if "fable" in name or "mythos" in name:
+        return _FABLE
     if "haiku" in name:
         return _HAIKU
     return _SONNET
+
+
+def display_model(model: str) -> str:
+    """Canonical display name for a Claude model id (date suffix stripped)."""
+    return _normalize(model)
 
 
 def calc_cost(usage: dict, model: str) -> float:
@@ -117,6 +255,9 @@ def _openai_rates_for(model: str) -> tuple[float, float, float]:
     name = model.split("[")[0]
     for marker in ("-2024", "-2025", "-2026", "-2027"):
         name = name.split(marker)[0]
+    live = _live_openai_rates(name)
+    if live is not None:
+        return live
     if name in _GPT_RATES:
         return _GPT_RATES[name]
     # Longest known prefix match (e.g. "gpt-5.5-codex-foo" -> gpt-5.5-codex).

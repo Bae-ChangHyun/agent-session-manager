@@ -100,3 +100,49 @@ class TestOpenAIPricing:
         # cached input billed cheaper
         u2 = {"input_tokens": 1_000_000, "cached_input_tokens": 1_000_000, "output_tokens": 0}
         assert pricing.calc_openai_cost(u2, "gpt-5.5") == 0.5
+
+
+def _write_rollout_real_layout(path: Path, session_id: str, cwd: str, turn_models: list[str], usage: dict | None):
+    """Rollout matching real Codex output: model only on turn_context lines."""
+    lines: list[dict] = [
+        {"timestamp": "2026-06-01T09:00:00.000Z", "type": "session_meta",
+         "payload": {"id": session_id, "timestamp": "2026-06-01T09:00:00.000Z", "cwd": cwd,
+                     "model_provider": "openai", "git": {"branch": "main"}}},
+    ]
+    for m in turn_models:
+        lines.append({"timestamp": "2026-06-01T09:00:01.000Z", "type": "turn_context",
+                      "payload": {"turn_id": "t", "cwd": cwd, "model": m}})
+    if usage is not None:
+        lines.append({"timestamp": "2026-06-01T09:00:03.000Z", "type": "event_msg",
+                      "payload": {"type": "token_count", "info": {"total_token_usage": usage}}})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+
+
+class TestCodexModelDetection:
+    def test_model_from_turn_context_last_wins(self, tmp_path: Path):
+        sessions = tmp_path / "sessions" / "2026" / "06" / "01"
+        _write_rollout_real_layout(
+            sessions / "rollout-2026-06-01T09-00-00-cccc.jsonl",
+            "cccc", "/work/proj-c", ["gpt-5.4-mini", "gpt-5.5"],
+            {"input_tokens": 1_000_000, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 1_000_000},
+        )
+        codex_data.refresh()
+        with patch.object(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "sessions"):
+            usage = codex_data.get_usage_data()
+        assert set(usage["model_totals"]) == {"gpt-5.5"}
+        assert round(usage["total_cost"], 2) == 5.0
+
+    def test_missing_model_is_labeled_unknown(self, tmp_path: Path):
+        sessions = tmp_path / "sessions" / "2026" / "06" / "01"
+        _write_rollout_real_layout(
+            sessions / "rollout-2026-06-01T09-00-00-dddd.jsonl",
+            "dddd", "/work/proj-d", [],
+            {"input_tokens": 1_000, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 1_000},
+        )
+        codex_data.refresh()
+        with patch.object(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "sessions"):
+            usage = codex_data.get_usage_data()
+            periods = codex_data.get_period_usage("daily")
+        assert set(usage["model_totals"]) == {codex_data.UNKNOWN_MODEL}
+        assert set(periods[0]["models"]) == {codex_data.UNKNOWN_MODEL}

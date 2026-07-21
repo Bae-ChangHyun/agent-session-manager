@@ -8,7 +8,7 @@ from textual.containers import Container, VerticalScroll
 from textual.widgets import DataTable, Static, TabPane, TabbedContent
 
 from asm.i18n import t
-from asm.utils import format_bytes
+from asm.utils import RECENT_DAYS_LIMIT, TOP_PROJECT_CHART_ROWS, TOP_PROJECT_LIMIT, format_bytes
 
 
 def _fmt_tokens(n: int) -> str:
@@ -50,8 +50,8 @@ def _merge_usage(usages: dict[str, dict]) -> dict:
     return {
         "total_cost": total_cost,
         "model_totals": model_totals,
-        "project_costs": project_costs[:15],
-        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:14]),
+        "project_costs": project_costs[:TOP_PROJECT_LIMIT],
+        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:RECENT_DAYS_LIMIT]),
         "total_sessions_ever": total_sessions,
         "first_use": claude_u.get("first_use", ""),
         "num_startups": claude_u.get("num_startups", 0),
@@ -183,6 +183,8 @@ class DashboardPane(Container):
         return mods
 
     def _load(self) -> None:
+        from asm.services import pricing
+        pricing.load_live_rates()  # worker thread — network wait can't block the UI
         mods = self._source_modules()
         stats = {s: m.get_stats() for s, m in mods.items()}
         usage = {s: m.get_usage_data() for s, m in mods.items()}
@@ -245,11 +247,13 @@ class DashboardPane(Container):
         if not usage or not stats:
             return
 
+        from asm.services import pricing
         self.query_one("#dash-header", Static).update(
             f"{self._source_filter_line()}\n"
             f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
             f"{usage['num_startups']} startups  |  "
-            f"{usage['total_sessions_ever']} total sessions[/]"
+            f"{usage['total_sessions_ever']} total sessions  |  "
+            f"rates: {pricing.rates_source()}[/]"
         )
         self.query_one("#dash-div-1", Static).update("─" * 70)
 
@@ -281,7 +285,7 @@ class DashboardPane(Container):
         )
         costs = usage["project_costs"]
         cost_lines = []
-        for i, pc in enumerate(costs[:10], 1):
+        for i, pc in enumerate(costs[:TOP_PROJECT_CHART_ROWS], 1):
             bar_len = int(pc["cost"] / costs[0]["cost"] * 20) if costs and costs[0]["cost"] else 0
             bar = "▓" * bar_len
             tag = f"{_SRC_TAG.get(pc.get('source', ''), ' ')} " if show_tag else ""
