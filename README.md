@@ -63,6 +63,10 @@ same view filtered to **Claude** and to **Codex**:
 - **Empty sessions:** clean stub sessions that hold only a title/metadata and no conversation (can't be resumed)
 - **Migration:** copy Claude sessions between projects (originals preserved), with paths auto-rewritten
 
+### Artifacts
+- Browse every page you've published with Claude Code's **Artifact tool** — scanned straight out of your session history, newest first
+- Open in the browser (`Enter`/`o`) or copy the URL (`c`) without leaving the terminal; also available as `asm artifacts` (`--json` for scripts)
+
 ### Safe by default
 - Every delete goes to the **OS trash** and is recorded in an audit log
 - **Recovery snapshots** are taken before trashing (Claude and Codex), with a size/age cap so they don't pile up
@@ -146,6 +150,7 @@ asm projects                      # All projects (Claude + Codex)
 asm sessions --search "firewall"  # Search sessions by title
 asm preview <session-id>          # Print a conversation
 asm resume <session-id>           # cd into its project & resume (Claude/Codex)
+asm artifacts                     # Pages published via the Artifact tool
 asm backup list / asm recovery list
 
 # Destructive — always confirms first (skip with --yes); everything goes
@@ -161,7 +166,7 @@ asm migrate /old/project /new/project
 
 | Key | Action |
 |:---:|:---|
-| `F1`–`F6` | Switch tabs |
+| `F1`–`F7` | Switch tabs |
 | `s` / click | Dashboard source filter (All / Claude / Codex) |
 | `Tab` / `Shift+Tab` · `1` `2` `3` | Dashboard period (Daily / Weekly / Monthly) |
 | `d` / `D` | Trash selected / all orphaned |

@@ -7,6 +7,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from asm.i18n import t
+from asm.screens.artifacts import ArtifactsPane
 from asm.screens.backups import BackupsPane
 from asm.screens.dashboard import DashboardPane
 from asm.screens.debug_todos import DebugTodosPane
@@ -52,6 +53,7 @@ class CCTuiApp(App):
         Binding("f4", "tab('tab-debug-todos')", "Debug/Todos"),
         Binding("f5", "tab('tab-migrate')", "Migrate"),
         Binding("f6", "tab('tab-backups')", "Backups"),
+        Binding("f7", "tab('tab-artifacts')", "Artifacts"),
     ]
 
     def __init__(self, target_path: str | None = None, source: str = "all", **kwargs):
@@ -93,6 +95,8 @@ class CCTuiApp(App):
                 yield MigratePane()
             with TabPane(t("tab.backups"), id="tab-backups"):
                 yield BackupsPane()
+            with TabPane(t("tab.artifacts"), id="tab-artifacts"):
+                yield ArtifactsPane()
         yield Footer()
 
     def action_tab(self, tab_id: str) -> None:
@@ -170,7 +174,7 @@ class CCTuiApp(App):
         claude_data.refresh_usage_cache()
         for pane in self.query(
             "DashboardPane, ProjectsPane, FileHistoryPane, "
-            "DebugTodosPane, MigratePane, BackupsPane"
+            "DebugTodosPane, MigratePane, BackupsPane, ArtifactsPane"
         ):
             if hasattr(pane, "refresh_data"):
                 pane.refresh_data()

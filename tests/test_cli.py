@@ -252,3 +252,30 @@ def test_cli_backup_create_full_confirms_with_size(monkeypatch, capsys, tmp_path
     code, out = _run(monkeypatch, capsys, "backup", "create", "--type", "full", "--yes")
     assert code == 0
     assert Path(out.strip()).exists()
+
+
+def test_cli_artifacts_json(monkeypatch, capsys, tmp_path: Path):
+    import json as _json
+
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    from asm.services import artifacts as artifacts_service
+    monkeypatch.setattr(artifacts_service, "PROJECTS_DIR", Path(env["projects_dir"]))
+    session = Path(env["projects_dir"]) / env["encoded_a"] / "artifact-sess.jsonl"
+    rows = [
+        {"type": "assistant", "timestamp": "2026-07-05T08:00:00Z",
+         "message": {"content": [
+             {"type": "tool_use", "id": "a1", "name": "Artifact",
+              "input": {"file_path": "/tmp/page.html", "title": "My Page"}}]}},
+        {"type": "user", "timestamp": "2026-07-05T08:00:01Z",
+         "message": {"content": [
+             {"type": "tool_result", "tool_use_id": "a1",
+              "content": "Published /tmp/page.html at https://claude.ai/code/artifact/ccc-333"}]}},
+    ]
+    session.write_text("".join(_json.dumps(r) + "\n" for r in rows))
+
+    code, out = _run(monkeypatch, capsys, "artifacts", "--json")
+    assert code == 0
+    items = _json.loads(out)
+    assert len(items) == 1
+    assert items[0]["url"] == "https://claude.ai/code/artifact/ccc-333"
+    assert items[0]["title"] == "My Page"

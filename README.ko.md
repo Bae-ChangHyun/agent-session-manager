@@ -62,6 +62,10 @@
 - **빈 세션:** 제목/메타만 있고 대화가 없는(resume 불가) stub 세션 정리
 - **마이그레이션:** Claude 프로젝트 간 세션 복사(원본 유지), 경로 자동 갱신
 
+### 아티팩트
+- Claude Code **Artifact 도구**로 발행한 페이지를 세션 기록에서 찾아 최신순으로 나열
+- 터미널을 떠나지 않고 브라우저로 열기(`Enter`/`o`)·URL 복사(`c`) — `asm artifacts`(`--json`)로도 조회 가능
+
 ### 기본이 안전
 - 모든 삭제는 **OS 휴지통**으로, 감사 로그에 기록
 - 삭제 전 **복구 스냅샷** 생성 (Claude·Codex 모두), 용량/개수 상한으로 무한 누적 방지
@@ -145,6 +149,7 @@ asm projects                      # 전체 프로젝트 (Claude + Codex)
 asm sessions --search "방화벽"     # 세션 제목 검색
 asm preview <session-id>          # 대화 내용 출력
 asm resume <session-id>           # 세션의 프로젝트로 이동해 바로 resume (Claude/Codex)
+asm artifacts                     # Artifact 도구로 발행한 페이지 목록
 asm backup list / asm recovery list
 
 # 변경 — 실행 전 항상 확인을 묻습니다(--yes로 생략). TUI와 동일하게
@@ -160,7 +165,7 @@ asm migrate /old/project /new/project
 
 | 키 | 동작 |
 |:---:|:---|
-| `F1`~`F6` | 탭 전환 |
+| `F1`~`F7` | 탭 전환 |
 | `s` / 클릭 | 대시보드 소스 필터 (All / Claude / Codex) |
 | `Tab` / `Shift+Tab` · `1` `2` `3` | 대시보드 기간 (Daily / Weekly / Monthly) |
 | `d` / `D` | 선택 삭제 / 전체 고아 삭제 |

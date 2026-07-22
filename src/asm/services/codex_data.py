@@ -432,6 +432,16 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def get_project_cost_map(limit: int = SCAN_LIMIT) -> dict[str, float]:
+    """Cumulative cost per working directory from the cached recent-session scan."""
+    agg: dict[str, float] = defaultdict(float)
+    for info in _scanned_sessions(limit):
+        if info["usage"]:
+            model = info["model"] or UNKNOWN_MODEL
+            agg[info["cwd"] or "(unknown)"] += pricing.calc_openai_cost(info["usage"], model)
+    return dict(agg)
+
+
 def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
     """Per-project cost + model totals + daily session counts for recent sessions."""
     project_costs: dict[str, dict] = {}

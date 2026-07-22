@@ -774,6 +774,19 @@ def get_usage_data() -> dict:
     }
 
 
+def get_project_cost_map() -> dict[str, float]:
+    """Cumulative cost per project path (uncapped, from the cached usage scan)."""
+    from asm.services.pricing import calc_cost
+
+    encoded_to_paths = _build_encoded_to_paths_map()
+    agg: dict[str, float] = defaultdict(float)
+    for info in _collect_msg_usage().values():
+        agg[info.get("project_dir", "")] += calc_cost(info["usage"], info["model"])
+    return {
+        _project_label_for_dir(d, encoded_to_paths): c for d, c in agg.items() if c > 0
+    }
+
+
 def get_project_sessions(project_path: str) -> list[SessionDetail]:
     """Get sessions for one project.
 

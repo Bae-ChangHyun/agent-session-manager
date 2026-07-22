@@ -317,6 +317,36 @@ def cmd_preview(args) -> int:
     return 0
 
 
+# ── artifacts ───────────────────────────────────────────────────────────
+
+
+def cmd_artifacts(args) -> int:
+    from asm.models import decode_path_hint
+    from asm.services.artifacts import list_artifacts
+
+    items = list_artifacts()
+    if args.limit:
+        items = items[: args.limit]
+    if args.json:
+        _out_json([vars(a) for a in items])
+        return 0
+    if sys.stdout.isatty():
+        _print_table(
+            f"{len(items)} artifacts", ["published", "title", "project", "url"],
+            [(
+                _fmt_ts(a.published),
+                f"{a.favicon} {a.title}".strip(),
+                decode_path_hint(a.project_dir) if a.project_dir else "",
+                a.url,
+            ) for a in items],
+        )
+        return 0
+    for a in items:
+        print(f"{_fmt_ts(a.published)}  {a.url}  {a.title}")
+    print(f"\n{len(items)} artifacts")
+    return 0
+
+
 # ── resume ──────────────────────────────────────────────────────────────
 
 
@@ -681,6 +711,11 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--limit", type=int, default=50)
     _common(p)
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("artifacts", help="list artifacts published from Claude Code sessions")
+    p.add_argument("--limit", type=int, default=50, help="max rows (default 50, 0 = all)")
+    _common(p)
+    p.set_defaults(func=cmd_artifacts)
 
     p = sub.add_parser("resume", help="cd into a session's project and resume it (Claude/Codex)")
     p.add_argument("session_id")

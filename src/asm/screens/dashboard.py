@@ -168,7 +168,7 @@ class DashboardPane(Container):
             pt = self._get_period_table(key)
             pt.zebra_stripes = True
             pt.show_cursor = False
-            pt.add_columns("Period", "Cost", "Messages", "Input", "Output", "Cache")
+            pt.add_columns("Period", "Cost", "", "Messages", "Input", "Output", "Cache")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -374,19 +374,24 @@ class DashboardPane(Container):
         pt.clear()
 
         if period_data:
-            for p in period_data[:20]:
+            from rich.text import Text
+            rows = period_data[:20]
+            max_cost = max((r["total_cost"] for r in rows), default=0.0)
+            for p in rows:
+                bar = "▆" * round(p["total_cost"] / max_cost * 10) if max_cost else ""
                 pt.add_row(
                     p["period"],
                     f"${p['total_cost']:.2f}",
+                    Text(bar, style="green"),
                     str(p["total_messages"]),
                     _fmt_tokens(p["total_input"]),
                     _fmt_tokens(p["total_output"]),
                     _fmt_tokens(p["total_cache"]),
                 )
         elif not period_loaded:
-            pt.add_row(t("dash.loading_period"), "", "", "", "", "")
+            pt.add_row(t("dash.loading_period"), "", "", "", "", "", "")
         else:
-            pt.add_row(t("dash.no_data"), "", "", "", "", "")
+            pt.add_row(t("dash.no_data"), "", "", "", "", "", "")
 
         pt.move_cursor(row=0, column=0, animate=False, scroll=False)
         pt.scroll_home(animate=False, immediate=True, x_axis=False, y_axis=True)
