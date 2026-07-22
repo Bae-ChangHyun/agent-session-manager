@@ -16,6 +16,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.debug_todos": {"en": "Debug/Todos", "ko": "디버그/Todos"},
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
+    "tab.artifacts": {"en": "Artifacts", "ko": "아티팩트"},
+    "art.loading": {"en": "Scanning sessions for published artifacts...", "ko": "발행된 아티팩트를 세션에서 스캔 중..."},
+    "art.none": {
+        "en": "No artifacts published yet — pages published with Claude Code's Artifact tool will show up here.",
+        "ko": "발행된 아티팩트가 없습니다 — Claude Code의 Artifact 도구로 발행한 페이지가 여기에 표시됩니다.",
+    },
+    "art.header": {
+        "en": "{count} artifacts  ·  Enter/o: open in browser  ·  c: copy URL",
+        "ko": "아티팩트 {count}개  ·  Enter/o: 브라우저로 열기  ·  c: URL 복사",
+    },
+    "art.opened": {"en": "Opened {url}", "ko": "{url} 열림"},
+    "art.copied": {"en": "Copied {url}", "ko": "{url} 복사됨"},
     # Codex sessions
     # Confirm dialog
     "confirm.yes": {"en": "Confirm (y)", "ko": "확인 (y)"},
@@ -90,6 +102,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "proj.config_fail": {"en": "Remove failed", "ko": "제거 실패"},
     "proj.no_dir_info": {"en": "No project directory info", "ko": "프로젝트 디렉토리 정보 없음"},
     "proj.no_messages": {"en": "[dim]No conversation messages found[/]", "ko": "[dim]대화 메시지 없음[/]"},
+    "proj.resume_key_hint": {"en": "press o to resume now", "ko": "o 키로 바로 이어가기"},
+    "proj.exported": {"en": "Exported: {path}", "ko": "내보내기 완료: {path}"},
+    "proj.export_select_first": {
+        "en": "Select a session first (Enter to preview), then press e to export",
+        "ko": "먼저 세션을 선택(Enter로 미리보기)한 뒤 e 키로 내보내세요",
+    },
+    "proj.resume_select_first": {
+        "en": "Select a session first (Enter to preview), then press o to resume",
+        "ko": "먼저 세션을 선택(Enter로 미리보기)한 뒤 o 키로 이어가세요",
+    },
     "proj.btn_trash_orphaned": {"en": "Trash Orphaned Sessions ({count})", "ko": "Orphaned 세션 삭제 ({count})"},
     "proj.confirm_trash_orphaned": {
         "en": "Delete all orphaned session directories?\n\n{count} dirs with no matching project.\n[dim]Moved to trash, recoverable[/]",

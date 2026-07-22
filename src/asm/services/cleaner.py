@@ -280,22 +280,42 @@ def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int
 
 def count_empty_files(directory: Path) -> int:
     """Count files with empty content ([], {}, or empty)."""
+    return len(_list_empty_files(directory))
+
+
+def _list_empty_files(directory: Path) -> list[str]:
+    """Names of files whose content is [], {}, or empty."""
     if not directory.exists():
-        return 0
-    count = 0
+        return []
+    names: list[str] = []
     try:
-        for f in directory.iterdir():
+        for f in sorted(directory.iterdir()):
             if not f.is_file():
                 continue
             try:
                 content = f.read_text(errors="replace").strip()
                 if content in ("[]", "{}", ""):
-                    count += 1
+                    names.append(f.name)
             except OSError:
                 pass
     except (PermissionError, OSError):
         pass
-    return count
+    return names
+
+
+def list_empty_debug_files() -> list[str]:
+    """Names of empty debug files (what prune_empty_debug_files would trash)."""
+    return _list_empty_files(DEBUG_DIR)
+
+
+def list_empty_todo_entries() -> list[str]:
+    """Names of empty todo/task entries (what prune_empty_todo_files would trash)."""
+    if TASKS_DIR.exists():
+        try:
+            return sorted(d.name for d in TASKS_DIR.iterdir() if d.is_dir() and _task_dir_is_empty(d))
+        except (PermissionError, OSError):
+            return []
+    return _list_empty_files(TODOS_DIR)
 
 
 def trash_codex_session(path: str | Path) -> bool:

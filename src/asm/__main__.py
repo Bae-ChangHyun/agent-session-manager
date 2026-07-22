@@ -8,11 +8,25 @@ from asm.i18n import init_lang
 from asm.models import migrate_legacy_data_dir
 
 
+_EXAMPLES = """\
+examples:
+  asm                          open the TUI (Claude + Codex together)
+  asm cost --period weekly     cost & token stats per model
+  asm sessions --search auth   find sessions by title
+  asm resume <session-id>      cd into the session's project and resume it
+  asm clean empty --dry-run    preview empty-session cleanup
+  asm backup create --type full
+  asm recovery list            snapshots taken before deletions
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="asm",
         description="asm: manage Claude Code & Codex sessions, cost and data "
         "(run without a subcommand to open the TUI)",
+        epilog=_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--path",
@@ -58,6 +72,15 @@ def main():
 
     app = CCTuiApp(target_path=args.path, source=args.source)
     app.run()
+
+    # Hand off to `claude -r` / `codex resume` after the TUI exits via the
+    # resume action ('o' on a previewed session).
+    if app.resume_target:
+        from asm.cli import _exec_resume
+
+        session_id, source, cwd = app.resume_target
+        argv = ["codex", "resume", session_id] if source == "codex" else ["claude", "-r", session_id]
+        sys.exit(_exec_resume(argv, cwd, dry_run=False))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from asm.utils import format_bytes
+from asm.utils import TOP_PROJECT_CHART_ROWS, format_bytes
+
+_TITLE_WIDTH = 60
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
@@ -115,8 +117,9 @@ def _tagged_sessions(source: str, project: str | None) -> list[tuple]:
 
 
 def cmd_cost(args) -> int:
-    from asm.services import claude_data, codex_data
+    from asm.services import claude_data, codex_data, pricing
 
+    rates_note = pricing.load_live_rates()
     mods = {"claude": claude_data, "codex": codex_data}
     result = {}
     for src in _sources(args.source):
@@ -127,18 +130,25 @@ def cmd_cost(args) -> int:
             "total_cost": usage["total_cost"],
             "first_use": usage.get("first_use", ""),
             "model_totals": usage["model_totals"],
-            "top_projects": usage["project_costs"][:10],
+            "top_projects": usage["project_costs"][:TOP_PROJECT_CHART_ROWS],
             args.period: periods[: args.limit] if args.limit else periods,
         }
+        if src == "codex":
+            total = usage.get("total_sessions_ever", 0)
+            if total > codex_data.SCAN_LIMIT:
+                result[src]["note"] = (
+                    f"cost computed from the most recent {codex_data.SCAN_LIMIT} of {total} sessions"
+                )
 
     if args.json:
-        _out_json(result)
+        _out_json({"rates_source": rates_note, **result})
         return 0
 
     if sys.stdout.isatty():
         from rich.console import Console
 
         console = Console()
+        console.print(f"[dim]rates: {rates_note}[/]")
         num = ("left", "right", "right", "right", "right")
         for src, data in result.items():
             since = f"  [dim]since {data['first_use'][:10]}[/]" if data["first_use"] else ""
@@ -149,17 +159,26 @@ def cmd_cost(args) -> int:
                  for m, mt in sorted(data["model_totals"].items(), key=lambda x: -x[1]["costUSD"])],
                 justify=num,
             )
+            if codex_data.UNKNOWN_MODEL in data["model_totals"]:
+                console.print(
+                    f"[dim]{codex_data.UNKNOWN_MODEL} = session file records no model id; "
+                    f"priced at the default GPT tier[/]"
+                )
             _print_table(
                 args.period, ["period", "cost", "input", "output", "msgs"],
                 [(r["period"], f"${r['total_cost']:,.2f}", f"{r['total_input']:,}",
                   f"{r['total_output']:,}", f"{r['total_messages']:,}") for r in data[args.period]],
                 justify=num,
             )
+            if data.get("note"):
+                console.print(f"[yellow]※ {data['note']}[/]")
         return 0
 
+    print(f"rates: {rates_note}")
     for src, data in result.items():
         print(f"[{src}] total ${data['total_cost']:.2f}"
-              + (f"  (since {data['first_use'][:10]})" if data["first_use"] else ""))
+              + (f"  (since {data['first_use'][:10]})" if data["first_use"] else "")
+              + (f"  ※ {data['note']}" if data.get("note") else ""))
         for model, mt in sorted(data["model_totals"].items(), key=lambda x: -x[1]["costUSD"]):
             print(f"  {model:<40} ${mt['costUSD']:>9.2f}  in {mt['inputTokens']:>12,}  out {mt['outputTokens']:>10,}")
         print(f"  -- {args.period} --")
@@ -247,19 +266,18 @@ def cmd_sessions(args) -> int:
             f"{len(rows)} sessions", ["src", "modified", "project", "session id", "title"],
             [(
                 _src_cell(src), _fmt_ts(s.last_modified), path, s.session_id,
-                (s.summary or "").replace("\n", " ")[:60],
+                (s.summary or "").replace("\n", " ")[:_TITLE_WIDTH],
             ) for s, src, path in rows],
         )
         from rich.console import Console
         Console().print(
-            "[dim]Resume — Claude: [/][cyan]cd <project> && claude -r <session id>[/]"
-            "[dim]   ·   Codex: [/][cyan]codex resume <session id>[/]"
-            "[dim]  (Claude needs the project dir; Codex resumes by id)[/]"
+            "[dim]Resume any session: [/][cyan]asm resume <session id>[/]"
+            "[dim]  (cds into its project automatically; Claude and Codex)[/]"
         )
         return 0
 
     for s, src, path in rows:
-        title = (s.summary or "").replace("\n", " ")[:60]
+        title = (s.summary or "").replace("\n", " ")[:_TITLE_WIDTH]
         mark = "C" if src == "claude" else "X"
         print(f"{mark} {_fmt_ts(s.last_modified)}  {s.session_id}  {title}  ({path})")
     print(f"\n{len(rows)} sessions")
@@ -296,6 +314,36 @@ def cmd_preview(args) -> int:
         role = _role(m)
         print(f"--- {role} ---")
         print(m.get("content", ""))
+    return 0
+
+
+# ── artifacts ───────────────────────────────────────────────────────────
+
+
+def cmd_artifacts(args) -> int:
+    from asm.models import decode_path_hint
+    from asm.services.artifacts import list_artifacts
+
+    items = list_artifacts()
+    if args.limit:
+        items = items[: args.limit]
+    if args.json:
+        _out_json([vars(a) for a in items])
+        return 0
+    if sys.stdout.isatty():
+        _print_table(
+            f"{len(items)} artifacts", ["published", "title", "project", "url"],
+            [(
+                _fmt_ts(a.published),
+                f"{a.favicon} {a.title}".strip(),
+                decode_path_hint(a.project_dir) if a.project_dir else "",
+                a.url,
+            ) for a in items],
+        )
+        return 0
+    for a in items:
+        print(f"{_fmt_ts(a.published)}  {a.url}  {a.title}")
+    print(f"\n{len(items)} artifacts")
     return 0
 
 
@@ -396,14 +444,21 @@ def cmd_clean(args) -> int:
         print(f"trashed {ok}, failed {fail}")
         return 0 if fail == 0 else 1
 
-    if args.target == "debug":
-        ok, fail = cleaner.prune_empty_debug_files()
-        print(f"pruned {ok} empty debug file(s), failed {fail}")
-        return 0
-    if args.target == "todos":
-        ok, fail = cleaner.prune_empty_todo_files()
-        print(f"pruned {ok} empty todo file(s), failed {fail}")
-        return 0
+    if args.target in ("debug", "todos"):
+        if args.target == "debug":
+            names = cleaner.list_empty_debug_files()
+            label, prune = "empty debug file(s)", cleaner.prune_empty_debug_files
+        else:
+            names = cleaner.list_empty_todo_entries()
+            label, prune = "empty todo entry(ies)", cleaner.prune_empty_todo_files
+        if args.dry_run or not names:
+            _print_clean_plan(names, label, args)
+            return 0
+        if not _confirm(f"Trash {len(names)} {label}?", args.yes):
+            return 1
+        ok, fail = prune()
+        print(f"trashed {ok}, failed {fail}")
+        return 0 if fail == 0 else 1
     return 1
 
 
@@ -425,6 +480,35 @@ _BACKUP_CREATORS = {
     "plugins": "create_plugins_backup",
     "sessions": "create_sessions_backup",
     "codex": "create_codex_backup",
+}
+
+def _backup_source_dirs_full():
+    from asm.models import CLAUDE_DIR
+    return [CLAUDE_DIR]
+
+
+def _backup_source_dirs_sessions():
+    from asm.models import PROJECTS_DIR
+    return [PROJECTS_DIR]
+
+
+def _backup_source_dirs_plugins():
+    from asm.models import PLUGINS_DIR, SKILLS_DIR
+    return [PLUGINS_DIR, SKILLS_DIR]
+
+
+def _backup_source_dirs_codex():
+    from asm.models import CODEX_SESSIONS_DIR
+    return [CODEX_SESSIONS_DIR]
+
+
+# Directory-based backup types copy whole trees (possibly GBs) — the create
+# path sizes the source up front and confirms. config/settings copy tiny files.
+_BACKUP_SOURCE_DIRS = {
+    "full": _backup_source_dirs_full,
+    "sessions": _backup_source_dirs_sessions,
+    "plugins": _backup_source_dirs_plugins,
+    "codex": _backup_source_dirs_codex,
 }
 
 _BACKUP_RESTORERS = {
@@ -458,6 +542,15 @@ def cmd_backup(args) -> int:
         return 0
 
     if args.action == "create":
+        source_dirs = _BACKUP_SOURCE_DIRS.get(args.type)
+        if source_dirs:
+            from asm.utils import dir_size
+
+            total = sum(dir_size(d) for d in source_dirs() if d.exists())
+            if not _confirm(
+                f"Create {args.type} backup (~{format_bytes(total)} will be copied)?", args.yes
+            ):
+                return 1
         path = getattr(backup, _BACKUP_CREATORS[args.type])()
         if path:
             print(path)
@@ -546,14 +639,15 @@ def cmd_trash(args) -> int:
         return 0 if ok else 1
 
     if codex_data.is_available():
-        for cwd in [p.path for p in codex_data.get_projects()]:
-            for s in codex_data.get_project_sessions(cwd):
-                if s.session_id == args.session_id:
-                    if not _confirm(f"Trash Codex session {args.session_id}?", args.yes):
-                        return 1
-                    ok = cleaner.trash_codex_session(s.project_dir)  # rollout path
-                    print("trashed" if ok else "trash failed")
-                    return 0 if ok else 1
+        # Full-filename lookup, not the recent-N scan window — old sessions
+        # must stay trashable by id.
+        s = codex_data.find_session(args.session_id)
+        if s:
+            if not _confirm(f"Trash Codex session {args.session_id}?", args.yes):
+                return 1
+            ok = cleaner.trash_codex_session(s.project_dir)  # rollout path
+            print("trashed" if ok else "trash failed")
+            return 0 if ok else 1
 
     print(f"session not found: {args.session_id}", file=sys.stderr)
     return 1
@@ -617,6 +711,11 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--limit", type=int, default=50)
     _common(p)
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("artifacts", help="list artifacts published from Claude Code sessions")
+    p.add_argument("--limit", type=int, default=50, help="max rows (default 50, 0 = all)")
+    _common(p)
+    p.set_defaults(func=cmd_artifacts)
 
     p = sub.add_parser("resume", help="cd into a session's project and resume it (Claude/Codex)")
     p.add_argument("session_id")

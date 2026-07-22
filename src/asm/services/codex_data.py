@@ -23,11 +23,17 @@ from asm.models import (
     Stats,
 )
 from asm.services import pricing
+from asm.utils import RECENT_DAYS_LIMIT, SUMMARY_MAX_CHARS, TOP_PROJECT_LIMIT
 
 logger = logging.getLogger(__name__)
 
 # Default cap on how many recent rollouts to scan for the heavier operations.
+# Surfaced to the user wherever capped aggregates are shown (dashboard / CLI).
 SCAN_LIMIT = 800
+
+# Label for sessions whose rollout carries no model id anywhere; kept visible in
+# model tables instead of silently assuming a model. Priced at the default GPT tier.
+UNKNOWN_MODEL = "(unknown)"
 
 
 def is_available() -> bool:
@@ -107,6 +113,10 @@ def _scan_session(f: Path) -> dict | None:
                 if typ == "session_meta":
                     meta = payload
                     model = payload.get("model", "") or model
+                elif typ == "turn_context":
+                    # The authoritative model id lives here (session_meta only
+                    # carries model_provider). Last turn wins on mid-session switch.
+                    model = payload.get("model", "") or model
                 elif typ == "event_msg" and payload.get("type") == "token_count":
                     info = payload.get("info") or {}
                     usage = info.get("total_token_usage")
@@ -118,7 +128,7 @@ def _scan_session(f: Path) -> dict | None:
                         and payload.get("role") == "user":
                     text = _extract_input_text(payload.get("content", []))
                     if text and not text.startswith("#") and not text.startswith("<"):
-                        first_prompt = text[:120]
+                        first_prompt = text[:SUMMARY_MAX_CHARS]
     except OSError:
         return None
     if meta is None:
@@ -313,7 +323,7 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
         if dt is None:
             dt = datetime.fromtimestamp(info["mtime"])
         pk = _period_key(dt)
-        model = info["model"] or "gpt-5"
+        model = info["model"] or UNKNOWN_MODEL
         short = model
         usage = info["usage"]
         entry = agg[pk][short]
@@ -397,11 +407,39 @@ def move_session(rollout_path: str, new_cwd: str) -> bool:
                 changed = True
             out.append(json.dumps(obj, ensure_ascii=False))
         if changed:
-            p.write_text("\n".join(out) + "\n")
+            _atomic_write_text(p, "\n".join(out) + "\n")
             refresh()
         return changed
     except OSError:
         return False
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write via a same-dir temp file + os.replace so a crash can't truncate."""
+    import os
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def get_project_cost_map(limit: int = SCAN_LIMIT) -> dict[str, float]:
+    """Cumulative cost per working directory from the cached recent-session scan."""
+    agg: dict[str, float] = defaultdict(float)
+    for info in _scanned_sessions(limit):
+        if info["usage"]:
+            model = info["model"] or UNKNOWN_MODEL
+            agg[info["cwd"] or "(unknown)"] += pricing.calc_openai_cost(info["usage"], model)
+    return dict(agg)
 
 
 def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
@@ -417,17 +455,19 @@ def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.fromtimestamp(info["mtime"])
         except ValueError:
             dt = datetime.fromtimestamp(info["mtime"])
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()  # local date, same bucketing as the period tables
         sessions_by_day[dt.strftime("%Y-%m-%d")] += 1
 
         usage = info["usage"]
         if not usage:
             continue
-        cost = pricing.calc_openai_cost(usage, info["model"] or "gpt-5")
+        model = info["model"] or UNKNOWN_MODEL
+        cost = pricing.calc_openai_cost(usage, model)
         total_cost += cost
         cwd = info["cwd"] or "(unknown)"
         pc = project_costs.setdefault(cwd, {"path": cwd, "name": Path(cwd).name or cwd, "cost": 0.0, "duration": 0})
         pc["cost"] += cost
-        model = info["model"] or "gpt-5"
         mt = model_totals.setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0})
         mt["inputTokens"] += usage.get("input_tokens", 0)
         mt["outputTokens"] += usage.get("output_tokens", 0)
@@ -437,9 +477,9 @@ def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
     costs = sorted(project_costs.values(), key=lambda x: x["cost"], reverse=True)
     return {
         "total_cost": total_cost,
-        "project_costs": costs[:15],
+        "project_costs": costs[:TOP_PROJECT_LIMIT],
         "model_totals": model_totals,
-        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:14]),
+        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:RECENT_DAYS_LIMIT]),
         "total_sessions_ever": total_session_count(),
         "first_use": "",
         "num_startups": 0,

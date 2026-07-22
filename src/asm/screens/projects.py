@@ -34,11 +34,17 @@ from asm.utils import format_bytes
 from asm.widgets.action_bar import ActionBar
 
 
+def _fmt_cost(cost: float) -> str:
+    return f"${cost / 1000:.1f}k" if cost >= 1000 else f"${cost:.2f}"
+
+
 class ProjectsPane(Container):
     BINDINGS = [
         ("d", "trash_session", "Trash Session"),
         ("D", "trash_orphaned", "Trash Orphaned"),
         ("x", "remove_config", "Remove Config"),
+        ("o", "resume_session", "Resume"),
+        ("e", "export_session", "Export MD"),
     ]
 
     CSS = """
@@ -117,6 +123,7 @@ class ProjectsPane(Container):
         self._all_orphaned_sessions = []
         self._all_duplicates: dict[str, list[str]] = {}
         self._codex_paths: set[str] = set()
+        self._project_costs: dict[str, float] = {}
         self._empty_sessions: list[dict] = []
         self._filter_query = ""
         self._sort_mode = "path"
@@ -147,6 +154,7 @@ class ProjectsPane(Container):
 
     def _load_projects(self) -> None:
         from asm.services import codex_data
+        from asm.services.claude_data import get_project_cost_map
         projects = get_projects()
         orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
         duplicates = find_duplicate_sessions()
@@ -161,6 +169,10 @@ class ProjectsPane(Container):
                 if cp.path not in claude_paths:
                     projects.append(cp)
         empty_sessions = find_empty_sessions()
+        project_costs = get_project_cost_map()
+        if codex_data.is_available():
+            for cwd, cost in codex_data.get_project_cost_map().items():
+                project_costs[cwd] = project_costs.get(cwd, 0.0) + cost
         if self.app.target_path:
             projects = [p for p in projects if p.path == self.app.target_path]
             orphaned_sessions = []
@@ -168,15 +180,18 @@ class ProjectsPane(Container):
             codex_paths = {p for p in codex_paths if p == self.app.target_path}
             empty_sessions = []
         self.app.call_from_thread(
-            self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths, empty_sessions
+            self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths,
+            empty_sessions, project_costs,
         )
 
-    def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None, empty_sessions=None) -> None:
+    def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None,
+                          empty_sessions=None, project_costs=None) -> None:
         self._all_projects = projects
         self._all_orphaned_sessions = orphaned_sessions or []
         self._all_duplicates = duplicates or {}
         self._codex_paths = codex_paths or set()
         self._empty_sessions = empty_sessions or []
+        self._project_costs = project_costs or {}
         self._session_cache = None
         self._session_cache_gen += 1
         self._build_tree_from_state()
@@ -210,7 +225,8 @@ class ProjectsPane(Container):
             ]
 
         if self._sort_mode == "cost":
-            projects.sort(key=lambda p: (-(p.last_cost or 0), p.path.casefold()))
+            costs = self._project_costs
+            projects.sort(key=lambda p: (-(costs.get(p.path) or p.last_cost or 0), p.path.casefold()))
         elif self._sort_mode == "status":
             projects.sort(key=lambda p: (p.exists, p.path.casefold()))
         else:
@@ -524,8 +540,10 @@ class ProjectsPane(Container):
             marks += "[#10A37F]X[/]"
         marks_str = f"  {marks}" if marks else ""
         session_str = f"  [dim]{session_count} sessions[/]" if session_count > 0 else ""
+        cost = self._project_costs.get(p.path, 0.0)
+        cost_str = f"  [green]{_fmt_cost(cost)}[/]" if cost >= 0.005 else ""
 
-        label = f"{status} {display_name}{marks_str}{session_str}"
+        label = f"{status} {display_name}{marks_str}{session_str}{cost_str}"
         expandable = session_count > 0 or has_codex or bool(matched_sessions)
         if expandable or child_dirs:
             node = parent.add(label, data=("project", p.path), expand=bool(matched_sessions))
@@ -711,21 +729,66 @@ class ProjectsPane(Container):
             messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
             # Prefer the real project path; fall back to decoding the dir name.
             cwd = project_path or (decode_path_hint(project_dir) if project_dir else None)
-        self.app.call_from_thread(self._show_messages, session_id, messages, source, cwd)
+        self.app.call_from_thread(self._show_messages, session_id, messages, source, cwd, project_dir)
 
-    def _resume_hint(self, session_id: str, source: str, cwd: str | None) -> str:
+    def action_export_session(self) -> None:
+        """Write the previewed session's full conversation to a markdown file."""
+        target = getattr(self, "_preview_export", None)
+        if not target:
+            self.app.notify(t("proj.export_select_first"), severity="warning")
+            return
+        self.run_worker(lambda: self._do_export(*target), thread=True)
+
+    def _do_export(self, session_id: str, source: str, project_dir: str | None) -> None:
+        from datetime import datetime as _dt
+
         if source == "codex":
-            return f"codex resume {session_id}"
-        return f"cd {cwd or '<project dir>'} && claude -r {session_id}"
+            from asm.services import codex_data
+            messages = codex_data.get_session_messages(session_id, project_dir, limit=100_000)
+        else:
+            messages = get_session_messages(session_id, project_dir=project_dir, limit=100_000)
+        if not messages:
+            self.app.call_from_thread(self.app.notify, t("proj.no_messages"), severity="warning")
+            return
+        out_dir = Path.home() / "Desktop"
+        if not out_dir.exists():
+            out_dir = Path.home()
+        stamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+        out = out_dir / f"asm-session-{session_id[:8]}-{stamp}.md"
+        lines = [f"# Session {session_id}", f"_source: {source} · exported by asm_", ""]
+        role_names = {"user": "User", "assistant": "Assistant", "meta": "Meta"}
+        for m in messages:
+            lines.append(f"## {role_names.get(m.get('type'), m.get('type', '?'))}")
+            lines.append(m.get("content", ""))
+            lines.append("")
+        try:
+            out.write_text("\n".join(lines))
+        except OSError as exc:
+            self.app.call_from_thread(self.app.notify, str(exc), severity="error")
+            return
+        self.app.call_from_thread(self.app.notify, t("proj.exported", path=str(out)))
+
+    def action_resume_session(self) -> None:
+        """Quit the TUI and resume the previewed session in its project dir."""
+        target = getattr(self, "_preview_target", None)
+        if not target:
+            self.app.notify(t("proj.resume_select_first"), severity="warning")
+            return
+        self.app.resume_target = target
+        self.app.exit()
 
     def _show_messages(self, session_id: str, messages: list[dict], source: str = "claude",
-                       cwd: str | None = None) -> None:
+                       cwd: str | None = None, project_dir: str | None = None) -> None:
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
         header.update(f"[bold]Session:[/] {session_id[:16]}...")
 
-        resume = escape(self._resume_hint(session_id, source, cwd))
-        resume_line = f"[dim]↻ resume:[/] [cyan]{resume}[/]"
+        self._preview_target = (session_id, source, cwd)
+        self._preview_export = (session_id, source, project_dir)
+        resume_line = (
+            f"[dim]↻ resume:[/] [cyan]asm resume {escape(session_id)}[/]"
+            f"  [dim]({t('proj.resume_key_hint')})[/]"
+        )
 
         if not messages:
             body.update(f"{resume_line}\n\n{t('proj.no_messages')}")

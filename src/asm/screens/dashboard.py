@@ -8,7 +8,7 @@ from textual.containers import Container, VerticalScroll
 from textual.widgets import DataTable, Static, TabPane, TabbedContent
 
 from asm.i18n import t
-from asm.utils import format_bytes
+from asm.utils import RECENT_DAYS_LIMIT, TOP_PROJECT_CHART_ROWS, TOP_PROJECT_LIMIT, format_bytes
 
 
 def _fmt_tokens(n: int) -> str:
@@ -50,8 +50,8 @@ def _merge_usage(usages: dict[str, dict]) -> dict:
     return {
         "total_cost": total_cost,
         "model_totals": model_totals,
-        "project_costs": project_costs[:15],
-        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:14]),
+        "project_costs": project_costs[:TOP_PROJECT_LIMIT],
+        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:RECENT_DAYS_LIMIT]),
         "total_sessions_ever": total_sessions,
         "first_use": claude_u.get("first_use", ""),
         "num_startups": claude_u.get("num_startups", 0),
@@ -168,7 +168,7 @@ class DashboardPane(Container):
             pt = self._get_period_table(key)
             pt.zebra_stripes = True
             pt.show_cursor = False
-            pt.add_columns("Period", "Cost", "Messages", "Input", "Output", "Cache")
+            pt.add_columns("Period", "Cost", "", "Messages", "Input", "Output", "Cache")
         self.refresh_data()
 
     def refresh_data(self) -> None:
@@ -183,6 +183,8 @@ class DashboardPane(Container):
         return mods
 
     def _load(self) -> None:
+        from asm.services import pricing
+        pricing.load_live_rates()  # worker thread — network wait can't block the UI
         mods = self._source_modules()
         stats = {s: m.get_stats() for s, m in mods.items()}
         usage = {s: m.get_usage_data() for s, m in mods.items()}
@@ -245,11 +247,15 @@ class DashboardPane(Container):
         if not usage or not stats:
             return
 
+        from asm.services import pricing
+        # Claude's per-day history counts prompts; Codex counts sessions.
+        unit = {"claude": "prompts", "codex": "sessions"}.get(self._source, "prompts+sessions")
         self.query_one("#dash-header", Static).update(
             f"{self._source_filter_line()}\n"
             f"[dim]Since {usage['first_use'][:10] if usage['first_use'] else 'N/A'}  |  "
             f"{usage['num_startups']} startups  |  "
-            f"{usage['total_sessions_ever']} total sessions[/]"
+            f"{usage['total_sessions_ever']} total {unit}  |  "
+            f"rates: {pricing.rates_source()}[/]"
         )
         self.query_one("#dash-div-1", Static).update("─" * 70)
 
@@ -269,6 +275,12 @@ class DashboardPane(Container):
                 f"Out:{_fmt_tokens(mt['outputTokens']):>6s}  "
                 f"Cache:{_fmt_tokens(mt['cacheReadInputTokens']):>7s}"
             )
+        from asm.services.codex_data import UNKNOWN_MODEL
+        if UNKNOWN_MODEL in usage["model_totals"]:
+            model_lines.append(
+                f"  [dim]{UNKNOWN_MODEL} = session file records no model id; "
+                f"priced at the default GPT tier[/]"
+            )
         self.query_one("#dash-model-table", Static).update("\n".join(model_lines))
         self.query_one("#dash-div-2", Static).update("─" * 70)
 
@@ -281,7 +293,7 @@ class DashboardPane(Container):
         )
         costs = usage["project_costs"]
         cost_lines = []
-        for i, pc in enumerate(costs[:10], 1):
+        for i, pc in enumerate(costs[:TOP_PROJECT_CHART_ROWS], 1):
             bar_len = int(pc["cost"] / costs[0]["cost"] * 20) if costs and costs[0]["cost"] else 0
             bar = "▓" * bar_len
             tag = f"{_SRC_TAG.get(pc.get('source', ''), ' ')} " if show_tag else ""
@@ -362,19 +374,24 @@ class DashboardPane(Container):
         pt.clear()
 
         if period_data:
-            for p in period_data[:20]:
+            from rich.text import Text
+            rows = period_data[:20]
+            max_cost = max((r["total_cost"] for r in rows), default=0.0)
+            for p in rows:
+                bar = "▆" * round(p["total_cost"] / max_cost * 10) if max_cost else ""
                 pt.add_row(
                     p["period"],
                     f"${p['total_cost']:.2f}",
+                    Text(bar, style="green"),
                     str(p["total_messages"]),
                     _fmt_tokens(p["total_input"]),
                     _fmt_tokens(p["total_output"]),
                     _fmt_tokens(p["total_cache"]),
                 )
         elif not period_loaded:
-            pt.add_row(t("dash.loading_period"), "", "", "", "", "")
+            pt.add_row(t("dash.loading_period"), "", "", "", "", "", "")
         else:
-            pt.add_row(t("dash.no_data"), "", "", "", "", "")
+            pt.add_row(t("dash.no_data"), "", "", "", "", "", "")
 
         pt.move_cursor(row=0, column=0, animate=False, scroll=False)
         pt.scroll_home(animate=False, immediate=True, x_axis=False, y_axis=True)

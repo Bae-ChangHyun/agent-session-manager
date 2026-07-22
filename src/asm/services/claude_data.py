@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -20,6 +19,9 @@ _SDK_FALLBACK_EXCEPTIONS = (
     AttributeError,
 )
 
+
+from asm.utils import RECENT_DAYS_LIMIT, SUMMARY_MAX_CHARS, TOP_PROJECT_LIMIT
+from asm.utils import dir_size as _dir_size
 
 from asm.models import (
     CLAUDE_DIR,
@@ -40,35 +42,6 @@ from asm.models import (
     decode_path_hint,
     encode_path,
 )
-
-
-def _dir_size(path: Path) -> int:
-    """Calculate total size of a directory.
-
-    Uses ``du -sb`` on Linux for speed, falls back to pure-Python walk
-    on Windows / macOS / when the command fails. (macOS ``du`` has no ``-b``,
-    so it's excluded to avoid a failing subprocess per directory.)
-    """
-    if sys.platform == "linux":
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["du", "-sb", "--", str(path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                return int(result.stdout.split()[0])
-        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
-            pass
-    # Pure-Python fallback (Windows, macOS, or du failure)
-    total = 0
-    try:
-        for entry in path.rglob("*"):
-            if entry.is_file():
-                total += entry.stat().st_size
-    except (PermissionError, OSError):
-        pass
-    return total
 
 
 def _file_count(path: Path) -> int:
@@ -220,11 +193,14 @@ def get_session_details(project_dir: str | None = None) -> list[SessionDetail]:
         return _get_sessions_via_jsonl(project_dir)
 
 
+_SDK_SESSION_LIMIT = 100
+
+
 def _get_sessions_via_sdk(project_dir: str | None) -> list[SessionDetail]:
     """Use claude-agent-sdk to list sessions."""
     from claude_agent_sdk import list_sessions
 
-    sessions = list_sessions(directory=project_dir, limit=100)
+    sessions = list_sessions(directory=project_dir, limit=_SDK_SESSION_LIMIT)
     result = []
     for s in sessions:
         result.append(
@@ -268,11 +244,11 @@ def _get_sessions_via_jsonl(project_dir: str | None) -> list[SessionDetail]:
                             if msg.get("type") == "user":
                                 content = msg.get("message", {}).get("content", "")
                                 if isinstance(content, str):
-                                    first_prompt = content[:100]
+                                    first_prompt = content[:SUMMARY_MAX_CHARS]
                                 elif isinstance(content, list):
                                     for block in content:
                                         if isinstance(block, dict) and block.get("type") == "text":
-                                            first_prompt = block.get("text", "")[:100]
+                                            first_prompt = block.get("text", "")[:SUMMARY_MAX_CHARS]
                                             break
                                 break
                         except json.JSONDecodeError:
@@ -672,6 +648,7 @@ def _aggregate_period(msg_last: dict[str, dict], period: str) -> list[dict]:
     from datetime import datetime
 
     from asm.services.pricing import calc_cost as _calc_cost
+    from asm.services.pricing import display_model as _display_model
 
     agg: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {
         "input_tokens": 0, "output_tokens": 0,
@@ -686,7 +663,7 @@ def _aggregate_period(msg_last: dict[str, dict], period: str) -> list[dict]:
         usage = info["usage"]
         model = info["model"]
         pk = _period_key(dt, period)
-        short_model = model.replace("claude-", "").split("-2025")[0].split("-2026")[0]
+        short_model = _display_model(model).removeprefix("claude-")
         entry = agg[pk][short_model]
         entry["input_tokens"] += usage.get("input_tokens", 0)
         entry["output_tokens"] += usage.get("output_tokens", 0)
@@ -731,7 +708,7 @@ def get_usage_data() -> dict:
     from collections import defaultdict
     from datetime import datetime
 
-    from asm.services.pricing import calc_cost as _calc_cost
+    from asm.services.pricing import calc_cost as _calc_cost, display_model
 
     data = load_claude_json()
     encoded_to_paths = _build_encoded_to_paths_map()
@@ -747,7 +724,8 @@ def get_usage_data() -> dict:
         total_cost += cost
         proj_agg[info.get("project_dir", "")] += cost
         mt = model_totals.setdefault(
-            model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0}
+            display_model(model),
+            {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "costUSD": 0},
         )
         mt["inputTokens"] += usage.get("input_tokens", 0)
         mt["outputTokens"] += usage.get("output_tokens", 0)
@@ -787,12 +765,25 @@ def get_usage_data() -> dict:
 
     return {
         "total_cost": total_cost,
-        "project_costs": project_costs[:15],
+        "project_costs": project_costs[:TOP_PROJECT_LIMIT],
         "model_totals": model_totals,
-        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:14]),
+        "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:RECENT_DAYS_LIMIT]),
         "total_sessions_ever": sum(sessions_by_day.values()),
         "first_use": data.get("firstStartTime", ""),
         "num_startups": data.get("numStartups", 0),
+    }
+
+
+def get_project_cost_map() -> dict[str, float]:
+    """Cumulative cost per project path (uncapped, from the cached usage scan)."""
+    from asm.services.pricing import calc_cost
+
+    encoded_to_paths = _build_encoded_to_paths_map()
+    agg: dict[str, float] = defaultdict(float)
+    for info in _collect_msg_usage().values():
+        agg[info.get("project_dir", "")] += calc_cost(info["usage"], info["model"])
+    return {
+        _project_label_for_dir(d, encoded_to_paths): c for d, c in agg.items() if c > 0
     }
 
 
@@ -822,7 +813,7 @@ def get_project_sessions(project_path: str) -> list[SessionDetail]:
         meta = index.get(session_id)
         if meta:
             summary = meta.get("summary") or meta.get("firstPrompt") or f"(session {session_id[:8]})"
-            first_prompt = (meta.get("firstPrompt") or "")[:120]
+            first_prompt = (meta.get("firstPrompt") or "")[:SUMMARY_MAX_CHARS]
             git_branch = meta.get("gitBranch", "") or ""
         else:
             first_prompt, ai_title = _scan_jsonl_summary(jsonl)
@@ -831,7 +822,7 @@ def get_project_sessions(project_path: str) -> list[SessionDetail]:
         result.append(
             SessionDetail(
                 session_id=session_id,
-                summary=summary[:120],
+                summary=summary[:SUMMARY_MAX_CHARS],
                 last_modified=stat.st_mtime,
                 file_size=stat.st_size,
                 first_prompt=first_prompt,
@@ -872,18 +863,18 @@ def _scan_jsonl_summary(jsonl: Path) -> tuple[str, str]:
                     continue
                 mtype = msg.get("type")
                 if mtype == "ai-title" and not ai_title:
-                    ai_title = (msg.get("aiTitle") or "")[:120]
+                    ai_title = (msg.get("aiTitle") or "")[:SUMMARY_MAX_CHARS]
                 elif mtype == "user" and not msg.get("isMeta") and not first_prompt:
                     content = msg.get("message", {}).get("content", "")
                     if isinstance(content, str):
                         if content and not content.startswith("<"):
-                            first_prompt = content[:120]
+                            first_prompt = content[:SUMMARY_MAX_CHARS]
                     elif isinstance(content, list):
                         for block in content:
                             if isinstance(block, dict) and block.get("type") == "text":
                                 text = block.get("text", "")
                                 if text and not text.startswith("<"):
-                                    first_prompt = text[:120]
+                                    first_prompt = text[:SUMMARY_MAX_CHARS]
                                     break
                 if ai_title and first_prompt:
                     break
@@ -932,7 +923,12 @@ def _session_has_conversation(jsonl: Path) -> bool:
     return False
 
 
-def find_empty_sessions(size_cap: int = 16384) -> list[dict]:
+# A session with a real conversation is far larger than this; only files under
+# the cap are parsed to confirm emptiness, which bounds the scan.
+EMPTY_SESSION_SIZE_CAP = 16 * 1024
+
+
+def find_empty_sessions(size_cap: int = EMPTY_SESSION_SIZE_CAP) -> list[dict]:
     """Find 'stub' session files that have no actual conversation.
 
     These are sessions with only an ai-title / pr-link / metadata and no

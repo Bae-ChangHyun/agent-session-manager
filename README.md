@@ -51,7 +51,7 @@ same view filtered to **Claude** and to **Codex**:
 - **Cost across both agents** with a source filter — **click** `All / Claude / Codex` or press `s`
 - Per-model token & cost breakdown (Opus / Sonnet / Haiku / GPT-5.x), each row tagged by source
 - Daily / weekly / monthly usage tables (one scan, all periods) and a Top-10 project cost chart
-- Accurate, current pricing from a LiteLLM-sourced rate table (new Opus/GPT models priced correctly, not at stale rates)
+- Accurate pricing fetched **live from LiteLLM** (15-min cache, offline fallback to the bundled table) — new models are priced correctly without waiting for a release, and the dashboard always shows which rate source was used
 
 ### Unified sessions (Claude + Codex)
 - One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**
@@ -62,6 +62,10 @@ same view filtered to **Claude** and to **Codex**:
 - **Duplicate sessions:** find the same session copied across projects and delete individual copies
 - **Empty sessions:** clean stub sessions that hold only a title/metadata and no conversation (can't be resumed)
 - **Migration:** copy Claude sessions between projects (originals preserved), with paths auto-rewritten
+
+### Artifacts
+- Browse every page you've published with Claude Code's **Artifact tool** — scanned straight out of your session history, newest first
+- Open in the browser (`Enter`/`o`) or copy the URL (`c`) without leaving the terminal; also available as `asm artifacts` (`--json` for scripts)
 
 ### Safe by default
 - Every delete goes to the **OS trash** and is recorded in an audit log
@@ -93,7 +97,7 @@ same view filtered to **Claude** and to **Codex**:
 
 - **TUI:** [Textual](https://github.com/Textualize/textual) + [Rich](https://github.com/Textualize/rich)
 - **Safety:** [send2trash](https://github.com/arsenetar/send2trash) (OS trash, not `rm`)
-- **Sessions:** [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) with a JSONL fallback parser
+- **Sessions:** built-in JSONL parser — no heavy deps; optional [claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/) via `pip install 'agent-session-manager[sdk]'`
 - **Python:** 3.11+
 
 ---
@@ -146,6 +150,7 @@ asm projects                      # All projects (Claude + Codex)
 asm sessions --search "firewall"  # Search sessions by title
 asm preview <session-id>          # Print a conversation
 asm resume <session-id>           # cd into its project & resume (Claude/Codex)
+asm artifacts                     # Pages published via the Artifact tool
 asm backup list / asm recovery list
 
 # Destructive — always confirms first (skip with --yes); everything goes
@@ -161,7 +166,7 @@ asm migrate /old/project /new/project
 
 | Key | Action |
 |:---:|:---|
-| `F1`–`F6` | Switch tabs |
+| `F1`–`F7` | Switch tabs |
 | `s` / click | Dashboard source filter (All / Claude / Codex) |
 | `Tab` / `Shift+Tab` · `1` `2` `3` | Dashboard period (Daily / Weekly / Monthly) |
 | `d` / `D` | Trash selected / all orphaned |

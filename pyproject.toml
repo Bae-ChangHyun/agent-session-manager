@@ -28,8 +28,10 @@ classifiers = [
 dependencies = [
     "textual>=1.0.0",
     "send2trash>=1.8.0",
-    "claude-agent-sdk>=0.1.40",
 ]
+
+[project.optional-dependencies]
+sdk = ["claude-agent-sdk>=0.1.40"]
 
 [project.urls]
 Homepage = "https://github.com/Bae-ChangHyun/agent-session-manager"

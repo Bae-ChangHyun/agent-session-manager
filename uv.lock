@@ -7,9 +7,13 @@ name = "agent-session-manager"
 version = "0.13.0"
 source = { editable = "." }
 dependencies = [
-    { name = "claude-agent-sdk" },
     { name = "send2trash" },
     { name = "textual" },
+]
+
+[package.optional-dependencies]
+sdk = [
+    { name = "claude-agent-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -19,10 +23,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-agent-sdk", specifier = ">=0.1.40" },
+    { name = "claude-agent-sdk", marker = "extra == 'sdk'", specifier = ">=0.1.40" },
     { name = "send2trash", specifier = ">=1.8.0" },
     { name = "textual", specifier = ">=1.0.0" },
 ]
+provides-extras = ["sdk"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]
