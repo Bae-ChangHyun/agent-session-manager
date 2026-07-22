@@ -175,6 +175,11 @@ class DashboardPane(Container):
         self._raw_periods = {}
         self.run_worker(self._load, thread=True)
 
+    def _show_scan_progress(self, text: str) -> None:
+        loading = self.query_one("#dash-loading", Static)
+        loading.display = True
+        loading.update(f"[bold]asm[/]  {t('dash.scanning', progress=text)}")
+
     def _source_modules(self) -> dict:
         from asm.services import claude_data, codex_data
         mods = {"claude": claude_data}
@@ -183,8 +188,18 @@ class DashboardPane(Container):
         return mods
 
     def _load(self) -> None:
-        from asm.services import pricing
+        from asm.services import ledger, pricing
         pricing.load_live_rates()  # worker thread — network wait can't block the UI
+
+        def _progress(source: str, done: int, total: int) -> None:
+            self.app.call_from_thread(
+                self._show_scan_progress, f"{source} {done:,}/{total:,}"
+            )
+
+        # Pre-warm the ledger with progress — the first backfill over a large
+        # ~/.codex can take minutes and must not look like a hang.
+        ledger.update_claude(_progress)
+        ledger.update_codex(_progress)
         mods = self._source_modules()
         stats = {s: m.get_stats() for s, m in mods.items()}
         usage = {s: m.get_usage_data() for s, m in mods.items()}
@@ -352,16 +367,6 @@ class DashboardPane(Container):
                 f"  {'Projects (cwd)':20s} {codex.total_projects:>6d}",
                 f"  {'Sessions':20s} {codex.total_sessions:>6d}",
             ]
-            # Codex cost/usage is computed from a recent window — say so when the
-            # session count exceeds it, so the headline isn't mistaken for a total.
-            try:
-                from asm.services import codex_data
-                if codex.total_sessions > codex_data.SCAN_LIMIT:
-                    lines.append(
-                        f"  [yellow]※ cost from most recent {codex_data.SCAN_LIMIT} sessions[/]"
-                    )
-            except Exception:
-                pass
         return "\n".join(lines)
 
     def _render_period_section(self) -> None:

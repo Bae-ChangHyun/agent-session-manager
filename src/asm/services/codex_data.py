@@ -4,8 +4,8 @@ Codex stores every session as a global ``sessions/YYYY/MM/DD/rollout-*.jsonl``
 file (not per-project like Claude). Each rollout starts with a ``session_meta``
 line carrying ``cwd``/``model``/``git`` and interleaves ``response_item`` and
 ``event_msg`` lines; ``event_msg`` ``token_count`` events carry cumulative token
-usage. Because there can be tens of thousands of rollouts, reads are capped to a
-recent window (callers surface the cap to the user).
+usage. Aggregations read the persistent usage ledger (see services.ledger),
+which parses each rollout once and keeps records even after files are deleted.
 """
 
 from __future__ import annotations
@@ -22,14 +22,9 @@ from asm.models import (
     SessionDetail,
     Stats,
 )
-from asm.services import pricing
 from asm.utils import RECENT_DAYS_LIMIT, SUMMARY_MAX_CHARS, TOP_PROJECT_LIMIT
 
 logger = logging.getLogger(__name__)
-
-# Default cap on how many recent rollouts to scan for the heavier operations.
-# Surfaced to the user wherever capped aggregates are shown (dashboard / CLI).
-SCAN_LIMIT = 800
 
 # Label for sessions whose rollout carries no model id anywhere; kept visible in
 # model tables instead of silently assuming a model. Priced at the default GPT tier.
@@ -68,26 +63,24 @@ def total_session_count() -> int:
         return 0
 
 
-# Cache of fully-parsed recent sessions so the dashboard's several aggregations
-# share a single filesystem scan. Keyed by the scan limit; cleared by refresh().
-_scan_cache: dict[int, list[dict]] = {}
+# Memo of the ledger read so one refresh serves every aggregation once.
+_scan_cache: dict[str, list[dict]] = {}
 
 
 def refresh() -> None:
-    """Drop cached session scans (call when the user refreshes)."""
+    """Drop the memoized ledger read (call when the user refreshes)."""
     _scan_cache.clear()
 
 
-def _scanned_sessions(limit: int) -> list[dict]:
-    cached = _scan_cache.get(limit)
+def _scanned_sessions() -> list[dict]:
+    """All Codex sessions from the usage ledger (incremental scan first)."""
+    cached = _scan_cache.get("all")
     if cached is not None:
         return cached
-    sessions = []
-    for f in _rollout_files(limit):
-        info = _scan_session(f)
-        if info is not None:
-            sessions.append(info)
-    _scan_cache[limit] = sessions
+    from asm.services import ledger
+    ledger.update_codex()
+    sessions = ledger.codex_records()
+    _scan_cache["all"] = sessions
     return sessions
 
 
@@ -165,12 +158,9 @@ def _extract_input_text(content) -> str:
     return ""
 
 
-def get_projects(limit: int = SCAN_LIMIT) -> list[ProjectInfo]:
-    """Group recent Codex sessions by working directory into project entries.
-
-    Reuses the shared (cached) session scan instead of re-reading file headers.
-    """
-    cwds = {info["cwd"] or "(unknown)" for info in _scanned_sessions(limit)}
+def get_projects() -> list[ProjectInfo]:
+    """Group Codex sessions by working directory into project entries."""
+    cwds = {info["cwd"] or "(unknown)" for info in _scanned_sessions()}
     result = [
         ProjectInfo(path=cwd, exists=Path(cwd).exists() if cwd != "(unknown)" else False)
         for cwd in cwds
@@ -193,24 +183,23 @@ def _detail_from_info(info: dict) -> SessionDetail:
     )
 
 
-def get_project_sessions(cwd: str, limit: int = SCAN_LIMIT) -> list[SessionDetail]:
-    """Return Codex sessions whose working directory matches ``cwd``."""
+def get_project_sessions(cwd: str) -> list[SessionDetail]:
+    """Codex sessions for ``cwd`` whose rollout file still exists on disk."""
     result = [
         _detail_from_info(info)
-        for info in _scanned_sessions(limit)
-        if info["cwd"] == cwd
+        for info in _scanned_sessions()
+        if info["cwd"] == cwd and Path(info["path"]).exists()
     ]
     result.sort(key=lambda s: s.last_modified, reverse=True)
     return result
 
 
 def get_sessions_by_paths(paths) -> list[SessionDetail]:
-    """Load Codex sessions directly from rollout file paths, ignoring SCAN_LIMIT.
+    """Load Codex sessions directly from rollout file paths.
 
-    Full-text search scans every rollout via ripgrep, so a body match can live
-    in a session older than the recent-N scan cap. This loads those matches
-    straight from disk so they still surface. Unreadable/missing paths are
-    skipped; results are newest-first.
+    Full-text search identifies matches by absolute path via ripgrep; this
+    loads those straight from disk. Unreadable/missing paths are skipped;
+    results are newest-first.
     """
     result = []
     for p in paths:
@@ -225,7 +214,7 @@ def get_sessions_by_paths(paths) -> list[SessionDetail]:
 
 
 def find_session(session_id: str) -> SessionDetail | None:
-    """Locate one Codex session by id (full scan, ignoring SCAN_LIMIT).
+    """Locate one Codex session by id (full filename scan).
 
     Returns its SessionDetail (carrying ``cwd`` and the rollout ``project_dir``)
     or None if no rollout matches.
@@ -289,10 +278,11 @@ def _find_rollout(session_id: str) -> Path | None:
     return None
 
 
-def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dict]:
-    """Aggregate token usage/cost by period from recent Codex sessions.
+def get_period_usage(period: str = "daily") -> list[dict]:
+    """Aggregate token usage/cost by period over the whole ledger.
 
-    Each session's final cumulative token usage is attributed to its start date.
+    Each session's final cumulative token usage is attributed to its start
+    date, valued at the rates recorded when it was first scanned.
     """
     from datetime import timedelta
 
@@ -312,7 +302,7 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
         "cost": 0.0, "messages": 0,
     }))
 
-    for info in _scanned_sessions(limit):
+    for info in _scanned_sessions():
         if not info["usage"]:
             continue
         ts = info["started"]
@@ -330,7 +320,7 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
         entry["input_tokens"] += usage.get("input_tokens", 0)
         entry["output_tokens"] += usage.get("output_tokens", 0)
         entry["cache_read_tokens"] += usage.get("cached_input_tokens", 0)
-        entry["cost"] += pricing.calc_openai_cost(usage, model)
+        entry["cost"] += info["cost"]
         entry["messages"] += 1
 
     result = []
@@ -348,9 +338,9 @@ def get_period_usage(period: str = "daily", limit: int = SCAN_LIMIT) -> list[dic
     return result
 
 
-def get_all_period_usage(limit: int = SCAN_LIMIT) -> dict[str, list[dict]]:
-    """All three period groupings (the underlying session scan is cached)."""
-    return {p: get_period_usage(p, limit) for p in ("daily", "weekly", "monthly")}
+def get_all_period_usage() -> dict[str, list[dict]]:
+    """All three period groupings (the underlying ledger read is memoized)."""
+    return {p: get_period_usage(p) for p in ("daily", "weekly", "monthly")}
 
 
 def _retarget_cwd(obj, new_cwd: str) -> bool:
@@ -432,24 +422,24 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
-def get_project_cost_map(limit: int = SCAN_LIMIT) -> dict[str, float]:
-    """Cumulative cost per working directory from the cached recent-session scan."""
+def get_project_cost_map() -> dict[str, float]:
+    """Cumulative cost per working directory over the whole ledger."""
     agg: dict[str, float] = defaultdict(float)
-    for info in _scanned_sessions(limit):
+    for info in _scanned_sessions():
         if info["usage"]:
-            model = info["model"] or UNKNOWN_MODEL
-            agg[info["cwd"] or "(unknown)"] += pricing.calc_openai_cost(info["usage"], model)
+            agg[info["cwd"] or "(unknown)"] += info["cost"]
     return dict(agg)
 
 
-def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
-    """Per-project cost + model totals + daily session counts for recent sessions."""
+def get_usage_data() -> dict:
+    """Per-project cost + model totals + daily session counts over the ledger."""
     project_costs: dict[str, dict] = {}
     model_totals: dict[str, dict] = {}
     sessions_by_day: dict[str, int] = defaultdict(int)
     total_cost = 0.0
 
-    for info in _scanned_sessions(limit):
+    records = _scanned_sessions()
+    for info in records:
         ts = info["started"]
         try:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else datetime.fromtimestamp(info["mtime"])
@@ -463,7 +453,7 @@ def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
         if not usage:
             continue
         model = info["model"] or UNKNOWN_MODEL
-        cost = pricing.calc_openai_cost(usage, model)
+        cost = info["cost"]
         total_cost += cost
         cwd = info["cwd"] or "(unknown)"
         pc = project_costs.setdefault(cwd, {"path": cwd, "name": Path(cwd).name or cwd, "cost": 0.0, "duration": 0})
@@ -480,14 +470,14 @@ def get_usage_data(limit: int = SCAN_LIMIT) -> dict:
         "project_costs": costs[:TOP_PROJECT_LIMIT],
         "model_totals": model_totals,
         "sessions_by_day": dict(sorted(sessions_by_day.items(), reverse=True)[:RECENT_DAYS_LIMIT]),
-        "total_sessions_ever": total_session_count(),
+        "total_sessions_ever": len(records),
         "first_use": "",
         "num_startups": 0,
     }
 
 
-def get_stats(limit: int = SCAN_LIMIT) -> Stats:
-    projects = get_projects(limit)
+def get_stats() -> Stats:
+    projects = get_projects()
     return Stats(
         total_projects=len(projects),
         total_sessions=total_session_count(),

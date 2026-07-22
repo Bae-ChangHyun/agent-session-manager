@@ -137,7 +137,7 @@ class ProjectsPane(Container):
         # Full-text body search results (None until the debounced scan lands):
         #  - Claude: session_ids whose JSONL body contains the query.
         #  - Codex: sessions loaded directly from matching rollout paths, grouped
-        #    by cwd. Loaded outside SCAN_LIMIT so old rollouts still surface.
+        #    by cwd, loaded straight from their rollout paths.
         # The generation counter discards results of superseded queries.
         self._content_claude_ids: set[str] | None = None
         self._content_codex_by_cwd: dict[str, list] = {}
@@ -250,7 +250,7 @@ class ProjectsPane(Container):
                 self.run_worker(lambda: self._build_session_cache(gen), thread=True)
             return {}
         # Codex body matches are folded in by _build_tree_from_state (they may
-        # live outside the cache's SCAN_LIMIT window), so here we only match
+        # not be present in the title cache), so here we only match
         # titles plus Claude body hits over the title cache.
         from asm.services.search import normalize
 
@@ -272,7 +272,7 @@ class ProjectsPane(Container):
     def _merge_codex_content_matches(self, matches: dict[str, list]) -> None:
         """Fold Codex body-search hits into ``matches`` (path -> tagged sessions).
 
-        These are loaded outside SCAN_LIMIT, so they may not be in the title
+        These are loaded straight from disk, so they may not be in the title
         cache; de-dupe by session id against whatever the title pass already
         added for the same working dir.
         """
@@ -331,7 +331,7 @@ class ProjectsPane(Container):
 
         claude_ids = search.search_claude_session_ids(query)
         # Codex rollouts are global; load every body match straight from disk so
-        # hits older than SCAN_LIMIT still appear, then group by working dir.
+        # hits appear even for long-dead working dirs, then group by cwd.
         codex_paths = search.search_codex_rollout_paths(query)
         codex_by_cwd: dict[str, list] = {}
         if codex_paths:

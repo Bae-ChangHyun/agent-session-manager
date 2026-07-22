@@ -51,6 +51,7 @@
 - 모델별 토큰·비용 (Opus / Sonnet / Haiku / GPT-5.x), 각 행을 소스 태그로 구분
 - 일별 / 주별 / 월별 사용량 표(한 번 스캔으로 전부), 프로젝트 비용 Top 10 차트
 - **LiteLLM에서 실시간으로 받아오는** 정확한 단가 (15분 캐시, 오프라인 시 내장 테이블 폴백) — 신모델도 릴리스를 기다리지 않고 바로 정확하게 계산되고, 어떤 단가 출처를 썼는지 대시보드에 항상 표시
+- **영구 사용량 장부** (`~/.asm/usage.db`): 세션은 한 번만 파싱하고 변경된 것만 재스캔, 비용은 **스캔 시점의 요율로 동결**(과거 세션을 현재 가격으로 재계산하지 않음), Claude Code가 오래된 세션을 지워도 **비용 이력은 보존** — Codex도 최근 N개 캡 없이 전체 이력 집계
 
 ### 통합 세션 (Claude + Codex)
 - 한 트리에 Claude 프로젝트와 Codex 작업 디렉토리를 함께, 각 세션을 **C** / **X**로 구분
@@ -88,7 +89,7 @@
 | `~/.claude.json` · `~/.claude/projects/` | Claude 프로젝트·비용·세션 JSONL |
 | `~/.claude/file-history/` · `debug/` · `tasks/` | 스냅샷·디버그 로그·세션별 task 목록 |
 | `~/.codex/sessions/` | Codex rollout 세션 파일 |
-| `~/.asm/backups/` · `trash-log.jsonl` | 백업(기존 `~/.cc-tui`에서 자동 이전)·삭제 감사 로그 |
+| `~/.asm/backups/` · `trash-log.jsonl` · `usage.db` | 백업(기존 `~/.cc-tui`에서 자동 이전)·삭제 감사 로그·사용량 장부 |
 
 ---
 
@@ -181,7 +182,6 @@ PyPI에 새 버전이 있으면 `asm` 실행 시 `y/N` 업그레이드 프롬프
 ## 🗺️ 로드맵
 
 - [ ] 데이터 개요에 소스별 디스크 사용량 표시
-- [ ] 대용량 `~/.claude` 대상 증분(mtime 기반) 사용량 스캔
 - [ ] CI에 ruff + mypy
 
 ---
