@@ -21,6 +21,7 @@ class MigrateResult:
 
     success: bool
     sessions_copied: int = 0
+    sessions_skipped: int = 0
     memory_copied: bool = False
     message: str = ""
 
@@ -103,14 +104,19 @@ def migrate_sessions(
         for existing in target_dir.iterdir():
             send2trash(str(existing))
 
-    # Copy sessions
+    # Copy sessions (tracking exactly which files landed in this run — only
+    # those may be path-rewritten below, or repeat runs corrupt earlier copies)
     copied = 0
+    skipped = 0
+    copied_files: list[Path] = []
     for src_file in source_sessions:
         dest_file = target_dir / src_file.name
         if mode == "append" and dest_file.exists():
-            continue  # Skip duplicates
+            skipped += 1
+            continue
         shutil.copy2(str(src_file), str(dest_file))
         copied += 1
+        copied_files.append(dest_file)
 
     # Copy memory
     memory_copied = False
@@ -135,20 +141,29 @@ def migrate_sessions(
 
     # Copy sessions-index.json
     src_index = source_dir / "sessions-index.json"
+    index_copied: Path | None = None
     if src_index.exists():
         dest_index = target_dir / "sessions-index.json"
         if mode == "overwrite" or not dest_index.exists():
             shutil.copy2(str(src_index), str(dest_index))
+            index_copied = dest_index
 
-    # Update paths in copied files if source != target
+    # Update paths in the files copied THIS run only — files from earlier runs
+    # already point at the target, and rewriting them again nests the path
+    # (source is often a prefix of target).
     if source_path != target_path:
-        _update_paths(target_dir, source_path, target_path, source_encoded, target_encoded)
+        _update_paths(copied_files, index_copied, source_path, target_path,
+                      source_encoded, target_encoded)
 
+    msg = f"{copied} sessions migrated"
+    if skipped:
+        msg += f", {skipped} already in target (skipped)"
     return MigrateResult(
         success=True,
         sessions_copied=copied,
+        sessions_skipped=skipped,
         memory_copied=memory_copied,
-        message=f"{copied} sessions migrated ({source_path} -> {target_path})",
+        message=f"{msg} ({source_path} -> {target_path})",
     )
 
 
@@ -175,15 +190,16 @@ def _replace_in_obj(obj: object, old: str, new: str, restrict_keys: bool = True)
 
 
 def _update_paths(
-    target_dir: Path,
+    copied_files: list[Path],
+    copied_index: Path | None,
     source_path: str,
     target_path: str,
     source_encoded: str,
     target_encoded: str,
 ) -> None:
-    """Update path references in migrated files."""
+    """Update path references in the files copied by this run."""
     # Update JSONL files - parse each line as JSON to avoid partial matches
-    for jsonl in target_dir.glob("*.jsonl"):
+    for jsonl in copied_files:
         try:
             lines = jsonl.read_text().splitlines()
             updated = []
@@ -208,12 +224,12 @@ def _update_paths(
             logger.warning("Path rewrite failed for %s: %s", jsonl.name, e)
 
     # sessions-index.json - parse as JSON, not string replace
-    idx = target_dir / "sessions-index.json"
-    if idx.exists():
+    idx = copied_index
+    if idx is not None and idx.exists():
         try:
             data = json.loads(idx.read_text())
             _replace_in_obj(data, source_path, target_path, restrict_keys=False)
             _replace_in_obj(data, source_encoded, target_encoded, restrict_keys=False)
             idx.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning("sessions-index.json rewrite failed in %s: %s", target_dir, e)
+            logger.warning("sessions-index.json rewrite failed for %s: %s", idx, e)
