@@ -90,6 +90,7 @@ class MigratePane(Container):
 
     BINDINGS = [
         ("space", "toggle_session", "Toggle"),
+        ("a", "toggle_all", "All/None"),
     ]
 
     def __init__(self, **kwargs):
@@ -320,15 +321,11 @@ class MigratePane(Container):
             header.update(f"[bold]Source:[/] {hint}  [dim](no sessions)[/]")
             return
 
-        header.update(
-            f"[bold]Source:[/] {hint}  ({total} sessions)  "
-            f"[dim]Space: toggle, Enter/DblClick: preview[/]"
-        )
-
         for sid, dt, prompt, size in sessions:
-            row_key = table.add_row("[bold green]●[/]", dt, prompt, size, key=sid)
+            row_key = table.add_row("[dim]○[/]", dt, prompt, size, key=sid)
             self._session_rows[sid] = row_key
-            self._selected_sessions.add(sid)
+        self._selected_sessions.clear()
+        self._update_header_count()
 
     def action_toggle_session(self) -> None:
         """Toggle selection of the focused session row."""
@@ -346,6 +343,22 @@ class MigratePane(Container):
             self._selected_sessions.add(sid)
             table.update_cell(row_key, check_col, "[bold green]●[/]")
 
+        self._update_header_count()
+
+    def action_toggle_all(self) -> None:
+        """Select every session, or clear the selection if all are selected."""
+        table = self.query_one("#session-table", DataTable)
+        if not self._session_rows:
+            return
+        check_col = list(table.columns.keys())[0]
+        select_all = len(self._selected_sessions) < len(self._session_rows)
+        for sid, row_key in self._session_rows.items():
+            if select_all:
+                self._selected_sessions.add(sid)
+                table.update_cell(row_key, check_col, "[bold green]●[/]")
+            else:
+                self._selected_sessions.discard(sid)
+                table.update_cell(row_key, check_col, "[dim]○[/]")
         self._update_header_count()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -389,13 +402,16 @@ class MigratePane(Container):
         header = self.query_one("#session-header", Static)
         sel = len(self._selected_sessions)
         total = len(self._session_rows)
-        if sel == total:
-            note = f"[dim]all {total} selected[/]"
+        if total and sel == total:
+            note = f"[bold cyan]all {total} selected[/]"
         elif sel == 0:
-            note = "[bold red]none selected[/]"
+            note = "[yellow]none selected — Space: pick, a: all[/]"
         else:
             note = f"[bold cyan]{sel}[/] of {total} selected"
-        header.update(f"[bold]Source:[/] {self._source_hint}  ({total} sessions)  {note}")
+        header.update(
+            f"[bold]Source:[/] {self._source_hint}  ({total} sessions)  {note}  "
+            f"[dim]Enter: preview[/]"
+        )
 
     def _start_migrate(self) -> None:
         if not self._source_encoded:
@@ -407,17 +423,17 @@ class MigratePane(Container):
         if self._source_encoded == self._target_encoded:
             self.app.notify(t("mig.same_error"), severity="error")
             return
-        if self._session_rows and not self._selected_sessions:
+        if not self._selected_sessions:
             self.app.notify(t("mig.no_sessions_selected"), severity="error")
             return
 
         sel = len(self._selected_sessions)
         total = len(self._session_rows)
-        count_info = f"{sel} of {total}" if sel > 0 else f"all {total}"
+        count_info = f"all {total}" if sel == total else f"{sel} of {total}"
         self.app.push_screen(
             ConfirmScreen(
                 t("mig.confirm", src=self._source_hint, tgt=self._target_hint, mode=self._mode)
-                + f"\n({count_info} sessions)"
+                + f"\n({count_info} sessions selected)"
             ),
             callback=lambda ok: self._do_migrate() if ok else None,
         )
@@ -427,13 +443,9 @@ class MigratePane(Container):
         tgt_hint = self._target_hint
         src_enc = self._source_encoded
         tgt_enc = self._target_encoded
-        # If all sessions selected, pass None (no filter = migrate all)
-        if len(self._selected_sessions) == len(self._session_rows):
-            selected = None
-        elif self._selected_sessions:
-            selected = list(self._selected_sessions)
-        else:
-            selected = []  # empty list = migrate nothing
+        # Always pass the explicit selection — implicit "empty means all"
+        # semantics once bulk-copied a whole project by accident.
+        selected = list(self._selected_sessions)
         mode = self._mode
         self.run_worker(
             lambda: self._execute_migrate(src_hint, tgt_hint, src_enc, tgt_enc, mode, selected),
@@ -452,17 +464,30 @@ class MigratePane(Container):
         self.app.call_from_thread(self._show_result, result)
 
     def refresh_data(self) -> None:
-        """Reload project trees."""
+        """Reload project trees and the session list for the current source."""
         self._selected_sessions.clear()
         self._session_rows = {}
+        table = self.query_one("#session-table", DataTable)
+        table.clear()
+        header = self.query_one("#session-header", Static)
         self.run_worker(self._load_projects, thread=True)
+        if self._source_encoded:
+            enc, hint = self._source_encoded, self._source_hint
+            self.run_worker(lambda: self._load_sessions(enc, hint), thread=True,
+                            group="session-load", exclusive=True)
+        else:
+            header.update("[dim]Select a source project to see sessions[/]")
 
     def _show_result(self, result) -> None:
         result_widget = self.query_one("#migrate-result", Static)
         if result.success:
+            skipped = (
+                f"  [dim](already in target: {result.sessions_skipped})[/]"
+                if result.sessions_skipped else ""
+            )
             result_widget.update(
                 f"[green]{t('mig.complete')}[/]\n"
-                f"Sessions copied: {result.sessions_copied}\n"
+                f"Sessions copied: {result.sessions_copied}{skipped}\n"
                 f"Memory copied: {'Yes' if result.memory_copied else 'No'}\n"
                 f"{result.message}"
             )
