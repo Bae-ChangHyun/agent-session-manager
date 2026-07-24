@@ -584,48 +584,20 @@ def refresh_usage_cache() -> None:
 
 
 def _collect_msg_usage() -> dict[str, dict]:
-    """Scan all session JSONL once: {message_id: {usage, model, ts_str}}.
+    """Usage records from the persistent ledger (incrementally updated).
 
-    Streaming writes several JSONL lines per API call with the same id; the last
-    one carries the final counts, so keeping the last entry per id deduplicates.
+    Returns {message_id: {usage, model, ts_str, project_dir, cost}} — ``cost``
+    is the value frozen when the message was first scanned, so old sessions
+    keep the rates that applied back then. Records survive file deletion.
     """
     global _usage_scan_cache
     if _usage_scan_cache is not None:
         return _usage_scan_cache
-    from asm.services.pricing import is_billable
+    from asm.services import ledger
 
-    msg_last: dict[str, dict] = {}
-    if PROJECTS_DIR.exists():
-        for d in PROJECTS_DIR.iterdir():
-            if not d.is_dir():
-                continue
-            for jsonl in d.rglob("*.jsonl"):
-                try:
-                    with open(jsonl) as f:
-                        for line in f:
-                            try:
-                                msg = json.loads(line)
-                                if msg.get("type") != "assistant":
-                                    continue
-                                m = msg.get("message", {})
-                                usage = m.get("usage")
-                                model = m.get("model", "")
-                                ts_str = msg.get("timestamp", "")
-                                msg_id = m.get("id", "")
-                                if not usage or not ts_str or not msg_id:
-                                    continue
-                                if not is_billable(model):
-                                    continue
-                                msg_last[msg_id] = {
-                                    "usage": usage, "model": model,
-                                    "ts_str": ts_str, "project_dir": d.name,
-                                }
-                            except (json.JSONDecodeError, KeyError):
-                                continue
-                except OSError:
-                    continue
-    _usage_scan_cache = msg_last
-    return msg_last
+    ledger.update_claude()
+    _usage_scan_cache = ledger.claude_records()
+    return _usage_scan_cache
 
 
 def _period_key(dt, period: str) -> str:
@@ -647,7 +619,6 @@ def _aggregate_period(msg_last: dict[str, dict], period: str) -> list[dict]:
     from collections import defaultdict
     from datetime import datetime
 
-    from asm.services.pricing import calc_cost as _calc_cost
     from asm.services.pricing import display_model as _display_model
 
     agg: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {
@@ -669,7 +640,7 @@ def _aggregate_period(msg_last: dict[str, dict], period: str) -> list[dict]:
         entry["output_tokens"] += usage.get("output_tokens", 0)
         entry["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0)
         entry["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0)
-        entry["cost"] += _calc_cost(usage, model)
+        entry["cost"] += info["cost"]
         entry["messages"] += 1
 
     result = []
@@ -708,7 +679,7 @@ def get_usage_data() -> dict:
     from collections import defaultdict
     from datetime import datetime
 
-    from asm.services.pricing import calc_cost as _calc_cost, display_model
+    from asm.services.pricing import display_model
 
     data = load_claude_json()
     encoded_to_paths = _build_encoded_to_paths_map()
@@ -720,7 +691,7 @@ def get_usage_data() -> dict:
     for info in _collect_msg_usage().values():
         usage = info["usage"]
         model = info["model"]
-        cost = _calc_cost(usage, model)
+        cost = info["cost"]
         total_cost += cost
         proj_agg[info.get("project_dir", "")] += cost
         mt = model_totals.setdefault(
@@ -775,13 +746,11 @@ def get_usage_data() -> dict:
 
 
 def get_project_cost_map() -> dict[str, float]:
-    """Cumulative cost per project path (uncapped, from the cached usage scan)."""
-    from asm.services.pricing import calc_cost
-
+    """Cumulative cost per project path over the whole ledger."""
     encoded_to_paths = _build_encoded_to_paths_map()
     agg: dict[str, float] = defaultdict(float)
     for info in _collect_msg_usage().values():
-        agg[info.get("project_dir", "")] += calc_cost(info["usage"], info["model"])
+        agg[info.get("project_dir", "")] += info["cost"]
     return {
         _project_label_for_dir(d, encoded_to_paths): c for d, c in agg.items() if c > 0
     }

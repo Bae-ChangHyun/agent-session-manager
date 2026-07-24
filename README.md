@@ -52,6 +52,7 @@ same view filtered to **Claude** and to **Codex**:
 - Per-model token & cost breakdown (Opus / Sonnet / Haiku / GPT-5.x), each row tagged by source
 - Daily / weekly / monthly usage tables (one scan, all periods) and a Top-10 project cost chart
 - Accurate pricing fetched **live from LiteLLM** (15-min cache, offline fallback to the bundled table) — new models are priced correctly without waiting for a release, and the dashboard always shows which rate source was used
+- **Persistent usage ledger** (`~/.asm/usage.db`): sessions are parsed once and re-scanned only when they change, each one valued at the rates in effect when it was scanned (old sessions are never re-priced), and **cost history survives** even after Claude Code prunes old transcripts — Codex history is indexed in full, no recent-N cap
 
 ### Unified sessions (Claude + Codex)
 - One tree: Claude projects and Codex working directories together, each session tagged **C** / **X**
@@ -89,7 +90,7 @@ same view filtered to **Claude** and to **Codex**:
 | `~/.claude.json` · `~/.claude/projects/` | Claude projects, costs, session JSONL |
 | `~/.claude/file-history/` · `debug/` · `tasks/` | Snapshots, debug logs, per-session task lists |
 | `~/.codex/sessions/` | Codex rollout session files |
-| `~/.asm/backups/` · `trash-log.jsonl` | Backups (auto-migrated from old `~/.cc-tui`) and the deletion audit log |
+| `~/.asm/backups/` · `trash-log.jsonl` · `usage.db` | Backups (auto-migrated from old `~/.cc-tui`), the deletion audit log, and the usage ledger |
 
 ---
 
@@ -182,7 +183,6 @@ When a newer release is on PyPI, `asm` offers a `y/N` upgrade prompt on startup 
 ## 🗺️ Roadmap
 
 - [ ] Per-source disk-usage in the data overview
-- [ ] Incremental (mtime-based) usage scan for very large `~/.claude` trees
 - [ ] ruff + mypy in CI
 
 ---

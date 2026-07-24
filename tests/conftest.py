@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
+from asm import models
 from asm.services import pricing
+
+
+@pytest.fixture(autouse=True)
+def _isolated_app_data(monkeypatch, tmp_path_factory):
+    """Point ~/.asm-backed state (usage ledger, pricing cache) at a fresh tmp
+    dir so tests never read or write the real app data."""
+    monkeypatch.setattr(models, "APP_DATA_DIR", tmp_path_factory.mktemp("asm-app-data"))
 
 
 @pytest.fixture(autouse=True)
