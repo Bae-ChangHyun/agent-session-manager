@@ -121,7 +121,7 @@ Both install a single `asm` command. On first run, data from the previous `~/.cc
 <summary><strong>Run from source</strong></summary>
 
 ```bash
-git clone https://github.com/Bae-ChangHyun/agent-session-manager.git
+git clone https://github.com/Changroro/agent-session-manager.git
 cd agent-session-manager
 uv sync && uv run asm
 ```

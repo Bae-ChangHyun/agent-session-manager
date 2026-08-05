@@ -120,7 +120,7 @@ pip install agent-session-manager
 <summary><strong>소스에서 실행</strong></summary>
 
 ```bash
-git clone https://github.com/Bae-ChangHyun/agent-session-manager.git
+git clone https://github.com/Changroro/agent-session-manager.git
 cd agent-session-manager
 uv sync && uv run asm
 ```
