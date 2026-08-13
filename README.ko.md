@@ -67,6 +67,13 @@
 - Claude Code **Artifact 도구**로 발행한 페이지를 세션 기록에서 찾아 최신순으로 나열
 - 터미널을 떠나지 않고 브라우저로 열기(`Enter`/`o`)·URL 복사(`c`) — `asm artifacts`(`--json`)로도 조회 가능
 
+### 에이전트 가져오기 (Claude Code ↔ Codex)
+- **MCP 서버 양방향:** `~/.codex/config.toml`과 `~/.claude.json`을 비교해 한쪽에만 있는 항목을 찾고, 각 에이전트의 `mcp add` CLI로 추가한다(파일 포맷·주석 보존). 인증 헤더와 env는 그대로 옮기며, `codex mcp add`가 HTTP 헤더를 표현하지 못해 그 부분만 `[mcp_servers.<name>.http_headers]`로 덧붙인다
+- **세션 양방향:** Claude 대화록 ↔ Codex rollout 스레드 변환 — 실제 CLI에서 resume해 맥락이 복원되는 것까지 확인했다. Claude→Codex는 공식 importer와 같은 `content_sha256` 원장에 기록해 Codex가 이미 가져온 세션을 중복 생성하지 않고, `/import`와 달리 원하는 세션만 고를 수 있다(30일·50개 제한 없음)
+- 가져온 사본은 **토큰 사용량이 0**으로 기록돼, 옮긴 세션이 두 번 과금 집계되지 않는다
+- 쓰기 전에 항상 계획을 먼저 보여준다: 가져올 수 있음 / 건너뜀 / 미지원 목록을 미리 확인하고, 첫 쓰기 전에 백업 스냅샷을 만든다
+- **기본 선택은 없다.** 계획은 최신 200개까지만 잡고(2.5만 개 rollout을 전부 해시하면 느리다), 제외된 오래된 개수를 함께 표시해 잘린 목록이 "이게 전부"로 읽히지 않게 한다
+
 ### 기본이 안전
 - 모든 삭제는 **OS 휴지통**으로, 감사 로그에 기록
 - 삭제 전 **복구 스냅샷** 생성 (Claude·Codex 모두), 용량/개수 상한으로 무한 누적 방지
@@ -166,7 +173,7 @@ asm migrate /old/project /new/project
 
 | 키 | 동작 |
 |:---:|:---|
-| `F1`~`F7` | 탭 전환 |
+| `F1`~`F8` | 탭 전환 |
 | `s` / 클릭 | 대시보드 소스 필터 (All / Claude / Codex) |
 | `Tab` / `Shift+Tab` · `1` `2` `3` | 대시보드 기간 (Daily / Weekly / Monthly) |
 | `d` / `D` | 선택 삭제 / 전체 고아 삭제 |

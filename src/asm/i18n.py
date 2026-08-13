@@ -17,6 +17,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
     "tab.artifacts": {"en": "Artifacts", "ko": "아티팩트"},
+    "tab.agent_import": {"en": "Agent Import", "ko": "에이전트 가져오기"},
+    "imp.loading": {
+        "en": "Scanning Claude Code and Codex for importable items...",
+        "ko": "Claude Code와 Codex에서 가져올 항목을 스캔 중...",
+    },
+    "imp.header": {
+        "en": "{mode}  ·  {pending} importable, {selected} selected  ·  1-4: mode  ·  space: toggle  ·  a: all/none  ·  i: import",
+        "ko": "{mode}  ·  가져올 수 있음 {pending}개, 선택 {selected}개  ·  1-4: 모드  ·  space: 선택  ·  a: 전체/해제  ·  i: 가져오기",
+    },
+    "imp.new": {"en": "importable", "ko": "가져오기 가능"},
+    "imp.skip": {"en": "skipped", "ko": "건너뜀"},
+    "imp.nothing": {"en": "Nothing selected to import.", "ko": "가져올 항목이 선택되지 않았습니다."},
+    "imp.confirm": {
+        "en": "Import {count} item(s) via {mode}? A backup snapshot is taken first.",
+        "ko": "{mode}(으)로 {count}개를 가져올까요? 먼저 백업 스냅샷을 만듭니다.",
+    },
+    "imp.done": {
+        "en": "Imported {imported}, failed {failed}",
+        "ko": "가져오기 {imported}개, 실패 {failed}개",
+    },
+    "imp.failed_item": {"en": "{item}: {reason}", "ko": "{item}: {reason}"},
+    "imp.error": {"en": "Import error: {error}", "ko": "가져오기 오류: {error}"},
+    "imp.truncated": {
+        "en": "({count} older ones not listed)",
+        "ko": "(오래된 {count}개는 목록에 없음)",
+    },
     "art.loading": {"en": "Scanning sessions for published artifacts...", "ko": "발행된 아티팩트를 세션에서 스캔 중..."},
     "art.none": {
         "en": "No artifacts published yet — pages published with Claude Code's Artifact tool will show up here.",

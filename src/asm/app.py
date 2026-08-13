@@ -12,6 +12,7 @@ from asm.screens.backups import BackupsPane
 from asm.screens.dashboard import DashboardPane
 from asm.screens.debug_todos import DebugTodosPane
 from asm.screens.file_history import FileHistoryPane
+from asm.screens.agent_import import AgentImportPane
 from asm.screens.migrate import MigratePane
 from asm.screens.projects import ProjectsPane
 
@@ -54,6 +55,7 @@ class CCTuiApp(App):
         Binding("f5", "tab('tab-migrate')", "Migrate"),
         Binding("f6", "tab('tab-backups')", "Backups"),
         Binding("f7", "tab('tab-artifacts')", "Artifacts"),
+        Binding("f8", "tab('tab-agent-import')", "Agent Import"),
     ]
 
     def __init__(self, target_path: str | None = None, source: str = "all", **kwargs):
@@ -97,6 +99,8 @@ class CCTuiApp(App):
                 yield BackupsPane()
             with TabPane(t("tab.artifacts"), id="tab-artifacts"):
                 yield ArtifactsPane()
+            with TabPane(t("tab.agent_import"), id="tab-agent-import"):
+                yield AgentImportPane()
         yield Footer()
 
     def action_tab(self, tab_id: str) -> None:
