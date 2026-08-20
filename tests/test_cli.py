@@ -279,3 +279,170 @@ def test_cli_artifacts_json(monkeypatch, capsys, tmp_path: Path):
     assert len(items) == 1
     assert items[0]["url"] == "https://claude.ai/code/artifact/ccc-333"
     assert items[0]["title"] == "My Page"
+
+
+# ── asm import ────────────────────────────────────────────────────────────
+
+
+def _codex_rollout(path: Path, cwd: str, first_text: str, extra_user: str | None = None) -> None:
+    rows = [
+        {
+            "timestamp": "2026-08-05T00:00:00.000Z",
+            "type": "session_meta",
+            "payload": {"session_id": "x", "cwd": cwd, "cli_version": "0.145.0"},
+        },
+        {
+            "timestamp": "2026-08-05T00:00:01.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": first_text}],
+            },
+        },
+    ]
+    if extra_user:
+        rows.append({
+            "timestamp": "2026-08-05T00:00:02.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": extra_user}],
+            },
+        })
+    rows.append({
+        "timestamp": "2026-08-05T00:00:03.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "답변"}],
+        },
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def import_env(monkeypatch, tmp_path: Path):
+    from asm.services import agent_import, codex_data
+
+    sessions = tmp_path / "codex" / "sessions"
+    projects = tmp_path / "claude" / "projects"
+    projects.mkdir(parents=True)
+    monkeypatch.setattr(agent_import, "CODEX_SESSIONS_DIR", sessions)
+    monkeypatch.setattr(agent_import, "PROJECTS_DIR", projects)
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", sessions)
+    codex_data.refresh()
+    yield sessions, projects
+    codex_data.refresh()
+
+
+def test_cli_import_list_shows_last_activity_newest_first(import_env, monkeypatch, capsys):
+    import os
+
+    sessions, _ = import_env
+    old = sessions / "2026" / "08" / "05" / "rollout-2026-08-05T09-00-00-11111111-1111-4111-8111-111111111111.jsonl"
+    new = sessions / "2026" / "08" / "01" / "rollout-2026-08-01T09-00-00-22222222-2222-4222-8222-222222222222.jsonl"
+    _codex_rollout(old, "/work/a", "오래된 세션")
+    _codex_rollout(new, "/work/b", "최근에 이어 쓴 세션")
+    # `new` starts earlier by filename but was touched last -> it must sort first.
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    os.utime(new, (1_800_000_000, 1_800_000_000))
+
+    code, out = _run(monkeypatch, capsys, "import", "list", "--to", "claude")
+
+    assert code == 0
+    assert "newest activity first" in out
+    body = [line for line in out.splitlines() if "turns" in line]
+    assert "22222222" in body[0] and "11111111" in body[1]
+    # utime above puts `new` in 2027 and `old` in 2023 — the printed activity
+    # time is what makes the ordering checkable.
+    assert "2027-" in body[0]
+    assert "2023-" in body[1]
+
+
+def test_cli_import_list_json_carries_last_active(import_env, monkeypatch, capsys):
+    sessions, _ = import_env
+    _codex_rollout(
+        sessions / "2026" / "08" / "05" / "rollout-2026-08-05T09-00-00-33333333-3333-4333-8333-333333333333.jsonl",
+        "/work/a",
+        "제이슨 확인",
+    )
+
+    code, out = _run(monkeypatch, capsys, "import", "list", "--to", "claude", "--json")
+
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["new"][0]["title"] == "제이슨 확인"
+    assert payload["new"][0]["last_active"]
+    assert payload["truncated"] == 0
+
+
+def test_cli_import_list_title_skips_harness_preamble(import_env, monkeypatch, capsys):
+    sessions, _ = import_env
+    _codex_rollout(
+        sessions / "2026" / "08" / "05" / "rollout-2026-08-05T09-00-00-44444444-4444-4444-8444-444444444444.jsonl",
+        "/work/a",
+        "<recommended_plugins> here is a list of plugins",
+        extra_user="실제로 내가 한 말",
+    )
+
+    code, out = _run(monkeypatch, capsys, "import", "list", "--to", "claude")
+
+    assert code == 0
+    assert "실제로 내가 한 말" in out
+    assert "recommended_plugins" not in out
+
+
+def test_cli_import_session_dry_run_infers_direction(import_env, monkeypatch, capsys):
+    sessions, projects = import_env
+    sid = "55555555-5555-4555-8555-555555555555"
+    _codex_rollout(
+        sessions / "2026" / "08" / "05" / f"rollout-2026-08-05T09-00-00-{sid}.jsonl",
+        "/work/target",
+        "옮길 대화",
+    )
+
+    code, out = _run(monkeypatch, capsys, "import", "session", sid, "--dry-run")
+
+    assert code == 0
+    assert "codex -> claude" in out
+    assert "/work/target" in out
+    assert list(projects.rglob("*.jsonl")) == []
+
+
+def test_cli_import_session_writes_into_cwd_project(import_env, monkeypatch, capsys):
+    from asm.services import backup
+
+    monkeypatch.setattr(backup, "create_sessions_backup", lambda: None)
+    monkeypatch.setattr("asm.services.agent_import.claude_cli_version", lambda: "2.1.228")
+    sessions, projects = import_env
+    sid = "66666666-6666-4666-8666-666666666666"
+    _codex_rollout(
+        sessions / "2026" / "08" / "05" / f"rollout-2026-08-05T09-00-00-{sid}.jsonl",
+        "/work/target",
+        "옮길 대화",
+    )
+
+    code, out = _run(monkeypatch, capsys, "import", "session", sid, "--yes")
+
+    assert code == 0
+    assert "imported as" in out
+    written = list(projects.rglob("*.jsonl"))
+    assert len(written) == 1
+    assert written[0].parent.name == "-work-target"
+    assert written[0].stem != sid  # a fresh id, not the Codex one
+
+
+def test_cli_import_session_requires_id(monkeypatch, capsys):
+    code, _out = _run(monkeypatch, capsys, "import", "session")
+    assert code == 2
+
+
+def test_cli_import_session_not_found(import_env, monkeypatch, capsys):
+    code, _out = _run(monkeypatch, capsys, "import", "session", "no-such-session")
+    assert code == 1

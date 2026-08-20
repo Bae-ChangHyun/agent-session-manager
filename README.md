@@ -159,6 +159,7 @@ asm sessions --search "firewall"  # Search sessions by title
 asm preview <session-id>          # Print a conversation
 asm resume <session-id>           # cd into its project & resume (Claude/Codex)
 asm artifacts                     # Pages published via the Artifact tool
+asm import list --to claude       # Sessions that could move Codex -> Claude
 asm backup list / asm recovery list
 
 # Destructive — always confirms first (skip with --yes); everything goes
@@ -168,7 +169,15 @@ asm trash <session-id>
 asm backup create --type full     # config|full|settings|plugins|sessions|codex
 asm backup restore <path> / asm recovery restore <id>
 asm migrate /old/project /new/project
+asm import session <session-id>   # Move one session; direction inferred from the id
+asm import mcp --to codex         # Move MCP servers between agents
 ```
+
+`asm import list` sorts by **last activity**, not by the timestamp in a Codex
+rollout filename (that one is when the session *started*), and prints that
+activity time so the ordering is visible. `asm import --help` spells out the
+rest — the 200-transcript scan window, the new id given to each copy, and how
+the destination folder is picked from the session's own `cwd`.
 
 ### Keyboard
 
