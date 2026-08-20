@@ -226,15 +226,16 @@ def test_cli_clean_todos_with_yes(monkeypatch, capsys, tmp_path: Path):
 
 
 def test_cli_trash_codex_session_beyond_scan_window(monkeypatch, capsys, tmp_path: Path):
-    from asm.services import cleaner, codex_data
+    from asm.services import codex_data
     from tests.test_codex_data import _write_rollout_real_layout
 
     _setup_fake_claude(monkeypatch, tmp_path)
     codex_root = tmp_path / "codex-sessions"
     rollout = codex_root / "2026" / "06" / "01" / "rollout-2026-06-01T09-00-00-cccc.jsonl"
     _write_rollout_real_layout(rollout, "cccc", "/work/proj-c", ["gpt-5.5"], None)
+    # Trash validates against the scanned session dirs, so repointing
+    # codex_data is enough — cleaner no longer holds its own root constant.
     monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", codex_root)
-    monkeypatch.setattr(cleaner, "CODEX_DIR", codex_root)
     codex_data.refresh()
     # Old capped lookup would miss ids outside the recent-N window; the by-id
     # path must not depend on the project scan at all.

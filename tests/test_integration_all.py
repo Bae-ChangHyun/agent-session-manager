@@ -162,10 +162,8 @@ def _setup_fake_codex(monkeypatch, tmp_path) -> dict:
     monkeypatch.setattr(backup_service, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(backup_service, "CODEX_SESSIONS_DIR", codex_dir / "sessions")
     monkeypatch.setattr(backup_service, "BACKUP_BASE_DIR", backups_dir)
-    monkeypatch.setattr(cleaner, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(cleaner, "send2trash", _fake_send2trash)
     monkeypatch.setattr(cleaner, "_TRASH_LOG", tmp_path / ".asm" / "trash-log.jsonl")
-    monkeypatch.setattr(recovery, "CODEX_DIR", codex_dir)
     monkeypatch.setattr(recovery, "RECOVERY_BASE_DIR", tmp_path / ".cc-tui" / "recovery")
     return {"codex_dir": codex_dir, "sessions_dir": codex_dir / "sessions", "backups_dir": backups_dir}
 

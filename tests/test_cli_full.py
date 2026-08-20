@@ -50,7 +50,9 @@ def test_cli_recovery_list_restore_delete(monkeypatch, capsys, tmp_path: Path):
     env = _setup_fake_claude(monkeypatch, tmp_path)
     from asm.services import recovery
     monkeypatch.setattr(recovery, "CLAUDE_DIR", Path(env["claude_dir"]))
-    monkeypatch.setattr(recovery, "CODEX_DIR", tmp_path / "no-codex")
+    from asm.services import codex_data as _codex_data
+
+    monkeypatch.setattr(_codex_data, "CODEX_SESSIONS_DIR", tmp_path / "no-codex" / "sessions")
     monkeypatch.setattr(recovery, "RECOVERY_BASE_DIR", tmp_path / "recovery")
     monkeypatch.setattr(recovery, "send2trash", _fake_send2trash)
 

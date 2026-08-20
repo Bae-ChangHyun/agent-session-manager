@@ -146,3 +146,58 @@ class TestCodexModelDetection:
             periods = codex_data.get_period_usage("daily")
         assert set(usage["model_totals"]) == {codex_data.UNKNOWN_MODEL}
         assert set(periods[0]["models"]) == {codex_data.UNKNOWN_MODEL}
+
+
+# --- Multiple Codex homes (one per account) ---
+
+
+def test_scans_every_codex_home(monkeypatch, tmp_path):
+    from asm import models
+    from asm.services import codex_data
+
+    primary = tmp_path / ".codex"
+    second = tmp_path / ".codex-work"
+    _write_rollout_real_layout(
+        primary / "sessions" / "2026" / "06" / "01" / "rollout-2026-06-01T09-00-00-aaaa.jsonl",
+        "aaaa", "/work/a", ["gpt-5.5"],
+        {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 10, "total_tokens": 110},
+    )
+    _write_rollout_real_layout(
+        second / "sessions" / "2026" / "06" / "02" / "rollout-2026-06-02T09-00-00-bbbb.jsonl",
+        "bbbb", "/work/b", ["gpt-5.5"],
+        {"input_tokens": 200, "cached_input_tokens": 0, "output_tokens": 20, "total_tokens": 220},
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(models, "CODEX_DIR", primary)
+    monkeypatch.setattr(models, "_codex_home_override", None)
+    monkeypatch.delenv("ASM_CODEX_HOMES", raising=False)
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", primary / "sessions")
+    codex_data.refresh()
+
+    assert codex_data.is_available()
+    assert codex_data.total_session_count() == 2
+    assert {p.path for p in codex_data.get_projects()} == {"/work/a", "/work/b"}
+
+    codex_data.refresh()
+
+
+def test_repointed_sessions_dir_stays_pinned(monkeypatch, tmp_path):
+    """Tests (and --codex-home) pin one dir; discovery must not widen it."""
+    from asm import models
+    from asm.services import codex_data
+
+    pinned = tmp_path / "pinned"
+    _write_rollout_real_layout(
+        pinned / "2026" / "06" / "01" / "rollout-2026-06-01T09-00-00-cccc.jsonl",
+        "cccc", "/work/c", ["gpt-5.5"], None,
+    )
+    (tmp_path / ".codex-other" / "sessions" / "2026" / "06").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(models, "CODEX_DIR", tmp_path / ".codex")
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", pinned)
+    codex_data.refresh()
+
+    assert codex_data._session_dirs() == [pinned]
+    assert codex_data.total_session_count() == 1
+
+    codex_data.refresh()

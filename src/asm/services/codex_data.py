@@ -31,18 +31,27 @@ logger = logging.getLogger(__name__)
 UNKNOWN_MODEL = "(unknown)"
 
 
+def _session_dirs() -> list[Path]:
+    """Every Codex sessions/ dir to scan (one per account home)."""
+    from asm import models
+
+    return models.resolve_session_dirs(CODEX_SESSIONS_DIR)
+
+
 def is_available() -> bool:
-    return CODEX_SESSIONS_DIR.exists()
+    return any(d.exists() for d in _session_dirs())
 
 
 def _rollout_files(limit: int | None = None) -> list[Path]:
-    """Return rollout files newest-first (optionally capped)."""
-    if not CODEX_SESSIONS_DIR.exists():
-        return []
-    try:
-        files = list(CODEX_SESSIONS_DIR.rglob("rollout-*.jsonl"))
-    except (PermissionError, OSError):
-        return []
+    """Return rollout files newest-first across every Codex home (optionally capped)."""
+    files: list[Path] = []
+    for directory in _session_dirs():
+        if not directory.exists():
+            continue
+        try:
+            files.extend(directory.rglob("rollout-*.jsonl"))
+        except (PermissionError, OSError):
+            continue
     files.sort(key=lambda f: _safe_mtime(f), reverse=True)
     return files[:limit] if limit else files
 
@@ -55,10 +64,12 @@ def _safe_mtime(f: Path) -> float:
 
 
 def total_session_count() -> int:
-    if not CODEX_SESSIONS_DIR.exists():
-        return 0
+    total = 0
     try:
-        return sum(1 for _ in CODEX_SESSIONS_DIR.rglob("rollout-*.jsonl"))
+        for directory in _session_dirs():
+            if directory.exists():
+                total += sum(1 for _ in directory.rglob("rollout-*.jsonl"))
+        return total
     except (PermissionError, OSError):
         return 0
 
@@ -377,7 +388,8 @@ def move_session(rollout_path: str, new_cwd: str) -> bool:
     # (parity with the sibling trash function), even though callers pass scanned
     # rollouts. Uses the module-level dir so it follows test/patched roots.
     try:
-        if p.is_symlink() or not p.resolve().is_relative_to(CODEX_SESSIONS_DIR.resolve()):
+        roots = [d.resolve() for d in _session_dirs() if d.exists()]
+        if p.is_symlink() or not any(p.resolve().is_relative_to(r) for r in roots):
             logger.warning("Refusing to move session outside Codex sessions dir: %s", rollout_path)
             return False
     except OSError:
