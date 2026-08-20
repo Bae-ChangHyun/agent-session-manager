@@ -699,3 +699,58 @@ def test_subagent_transcripts_are_not_listed_as_sessions(claude_session):
     listed = agent_import.claude_session_files()
 
     assert listed == [claude_session]
+
+
+def test_title_skips_harness_preamble_but_keeps_it_in_the_transcript(codex_rollout):
+    rows = _rollout_rows()
+    rows.insert(
+        2,
+        {
+            "timestamp": "2026-08-05T00:00:00.500Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<recommended_plugins> a list"}],
+            },
+        },
+    )
+    codex_rollout.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+
+    plan = agent_import.plan_sessions_to_claude()
+
+    assert plan.new[0].title == "코덱스에서 한 질문"
+    turns, _cwd, _model = agent_import.read_codex_rollout(codex_rollout)
+    assert turns[0].text == "<recommended_plugins> a list"
+
+
+def test_title_falls_back_when_every_user_turn_is_a_preamble(claude_session, tmp_path):
+    only_preamble = claude_session.parent / "preamble-only.jsonl"
+    rows = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s",
+            "cwd": "/work/proj",
+            "timestamp": "2026-08-01T00:00:00.000Z",
+            "message": {"role": "user", "content": "<wrapper>only this</wrapper>"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "sessionId": "s",
+            "cwd": "/work/proj",
+            "timestamp": "2026-08-01T00:00:01.000Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "답변"}]},
+        },
+    ]
+    only_preamble.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+
+    plan = agent_import.plan_sessions_to_codex([only_preamble])
+
+    # Claude drops `<`-prefixed user turns, so only the assistant turn survives.
+    assert plan.new[0].title == "답변"

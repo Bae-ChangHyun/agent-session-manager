@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -687,6 +688,123 @@ def cmd_migrate(args) -> int:
 # ── parser wiring ───────────────────────────────────────────────────────
 
 
+
+def _import_direction(to: str) -> str:
+    return "claude-to-codex" if to == "codex" else "codex-to-claude"
+
+
+def _resolve_import_source(session_id: str):
+    """Locate a session by id and report which way it can travel."""
+    from pathlib import Path as _Path
+
+    from asm.models import PROJECTS_DIR
+    from asm.services import codex_data
+
+    encoded = _find_claude_project_dir(session_id)
+    if encoded:
+        return "claude", _Path(PROJECTS_DIR) / encoded / f"{session_id}.jsonl"
+    if codex_data.is_available():
+        found = codex_data.find_session(session_id)
+        if found:
+            return "codex", _Path(found.project_dir)
+    return None, None
+
+
+def cmd_import(args) -> int:
+    from asm.services import agent_import
+
+    if args.action == "mcp":
+        plan = agent_import.plan_mcp(_import_direction(args.to))
+        if args.json:
+            print(json.dumps({
+                "new": [s.name for s in plan.new],
+                "already_present": plan.already_present,
+                "unsupported": [{"name": n, "reason": r} for n, r in plan.unsupported],
+            }, ensure_ascii=False, indent=2))
+        else:
+            print(f"{plan.source} -> {plan.target}: {len(plan.new)} importable, "
+                  f"{len(plan.already_present)} already there")
+            for server in plan.new:
+                print(f"  + {server.name} ({server.transport})")
+            for name, reason in plan.unsupported:
+                print(f"  - {name}: {reason}")
+        if args.dry_run or not plan.new:
+            return 0
+        if not _confirm(f"Import {len(plan.new)} MCP server(s) into {plan.target}?", args.yes):
+            return 1
+        result = agent_import.apply_mcp(plan)
+        print(f"imported {len(result.imported)}, failed {len(result.failed)}")
+        for name, reason in result.failed:
+            print(f"  ! {name}: {reason}", file=sys.stderr)
+        return 1 if result.failed else 0
+
+    if args.action == "list":
+        plan = (agent_import.plan_sessions_to_codex() if args.to == "codex"
+                else agent_import.plan_sessions_to_claude())
+        rows = [{"path": c.path, "title": c.title, "turns": c.turns, "cwd": c.cwd,
+                 "last_active": datetime.fromtimestamp(c.modified_at / 1e9).isoformat(" ", "minutes")}
+                for c in plan.new][: args.limit or None]
+        if args.json:
+            print(json.dumps({"new": rows, "already_imported": len(plan.already_imported),
+                              "truncated": plan.truncated}, ensure_ascii=False, indent=2))
+            return 0
+        print(f"{len(plan.new)} importable, {len(plan.already_imported)} already imported"
+              + (f", {plan.truncated} older not listed" if plan.truncated else "")
+              + "  (newest activity first)")
+        for row in rows:
+            print(f"  {_session_id_of(row['path'])}  {row['last_active']}  "
+                  f"{row['turns']:>5} turns  {row['title'][:52]}")
+        return 0
+
+    source, path = _resolve_import_source(args.session_id)
+    if not source:
+        print(f"session not found: {args.session_id}", file=sys.stderr)
+        return 1
+
+    if source == "claude":
+        plan = agent_import.plan_sessions_to_codex([path])
+        target = "codex"
+    else:
+        plan = agent_import.plan_sessions_to_claude([path])
+        target = "claude"
+
+    if plan.skipped:
+        for _p, reason in plan.skipped:
+            print(f"skipped: {reason}", file=sys.stderr)
+        return 1
+    if plan.already_imported and not plan.new:
+        print(f"already imported into {target}; nothing to do")
+        return 0
+
+    candidate = plan.new[0]
+    print(f"{source} -> {target}: {candidate.turns} turns  cwd={candidate.cwd}")
+    print(f"  title: {candidate.title[:70]}")
+    if args.dry_run:
+        return 0
+    if not _confirm(f"Import this session into {target}?", args.yes):
+        return 1
+
+    result = (agent_import.apply_sessions_to_codex(plan) if target == "codex"
+              else agent_import.apply_sessions_to_claude(plan))
+    for _src, new_id in result.imported:
+        print(f"imported as {new_id}")
+    for name, reason in result.failed:
+        print(f"  ! {name}: {reason}", file=sys.stderr)
+    if result.backup_path:
+        print(f"backup: {result.backup_path}")
+    return 1 if result.failed else 0
+
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+
+def _session_id_of(path: str) -> str:
+    """Session id in a transcript filename (Claude `<uuid>`, Codex `rollout-<ts>-<uuid>`)."""
+    stem = Path(path).stem
+    found = _UUID_RE.search(stem)
+    return found.group(0) if found else stem
+
+
 def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -760,6 +878,44 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--yes", action="store_true", help="skip confirmation")
     p.set_defaults(func=cmd_trash)
 
+    p = sub.add_parser(
+        "import",
+        help="move MCP servers or sessions between Claude Code and Codex",
+        description=(
+            "Move MCP servers or sessions between Claude Code and Codex.\n"
+            "\n"
+            "Sessions are listed newest-first by LAST ACTIVITY (file mtime), which is not\n"
+            "the timestamp in a Codex rollout filename -- that one is when the session\n"
+            "started. A session begun 08-13 and continued until 08-19 therefore sorts\n"
+            "above one that started 08-19. The `list` output prints that activity time so\n"
+            "the ordering is visible.\n"
+            "\n"
+            "Only the newest 200 transcripts are examined per run (hashing every one of\n"
+            "25k+ rollouts is slow); the count left out is reported, never hidden.\n"
+            "\n"
+            "Imported copies get a NEW id and are recorded so re-running skips them.\n"
+            "They carry zero token usage, so a moved session is never priced twice.\n"
+            "The destination folder is chosen from the session's own cwd.\n"
+            "\n"
+            "Examples:\n"
+            "  asm import list --to claude            # what could move Codex -> Claude\n"
+            "  asm import session <id> --dry-run      # direction inferred from the id\n"
+            "  asm import session <id> --yes\n"
+            "  asm import mcp --to codex              # MCP servers Claude -> Codex\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("action", choices=["session", "mcp", "list"],
+                   help="session: move one session by id; mcp: move MCP servers; list: importable sessions")
+    p.add_argument("session_id", nargs="?", help="session id (action=session)")
+    p.add_argument("--to", choices=["codex", "claude"], default="claude",
+                   help="destination agent for mcp/list (default: claude); session infers it from the id")
+    p.add_argument("--limit", type=int, default=50, help="max rows for list (default 50, 0 = all)")
+    p.add_argument("--dry-run", action="store_true", help="show what would happen, write nothing")
+    p.add_argument("--yes", action="store_true", help="skip confirmation")
+    _common(p)
+    p.set_defaults(func=cmd_import)
+
     p = sub.add_parser("migrate", help="copy sessions to another project path")
     p.add_argument("src", help="source project path")
     p.add_argument("dest", help="target project path")
@@ -776,5 +932,8 @@ def run_cli(args) -> int:
         return 2
     if args.command == "recovery" and args.action in ("restore", "delete") and not args.id:
         print(f"recovery {args.action} requires an id", file=sys.stderr)
+        return 2
+    if args.command == "import" and args.action == "session" and not args.session_id:
+        print("import session requires a session id", file=sys.stderr)
         return 2
     return args.func(args)

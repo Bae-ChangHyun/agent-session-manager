@@ -158,6 +158,7 @@ asm sessions --search "방화벽"     # 세션 제목 검색
 asm preview <session-id>          # 대화 내용 출력
 asm resume <session-id>           # 세션의 프로젝트로 이동해 바로 resume (Claude/Codex)
 asm artifacts                     # Artifact 도구로 발행한 페이지 목록
+asm import list --to claude       # Codex -> Claude 로 옮길 수 있는 세션
 asm backup list / asm recovery list
 
 # 변경 — 실행 전 항상 확인을 묻습니다(--yes로 생략). TUI와 동일하게
@@ -167,7 +168,14 @@ asm trash <session-id>
 asm backup create --type full     # config|full|settings|plugins|sessions|codex
 asm backup restore <path> / asm recovery restore <id>
 asm migrate /old/project /new/project
+asm import session <session-id>   # 세션 1개 이동(방향은 id로 자동 판별)
+asm import mcp --to codex         # MCP 서버 이동
 ```
+
+`asm import list`는 **마지막 활동 시각** 기준으로 정렬한다 — Codex rollout 파일명의
+시각은 세션을 *시작한* 때라 순서가 다르게 보인다. 그래서 활동 시각을 함께 출력해
+정렬 근거가 눈에 보이게 했다. 나머지(200개 스캔 창, 사본에 부여되는 새 id, 세션의
+`cwd`로 목적지 폴더를 정하는 방식)는 `asm import --help`에 적혀 있다.
 
 ### 키보드
 
