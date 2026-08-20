@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -57,8 +58,39 @@ LEGACY_APP_DATA_DIRS = [Path.home() / ".agentkeep", Path.home() / ".cc-tui"]
 
 # --- Codex (OpenAI Codex CLI) data layout ---
 # Sessions are global rollout-*.jsonl files partitioned by date, not per-project.
-CODEX_DIR = Path.home() / ".codex"
+# CODEX_HOME is Codex's own way of selecting a home, so people running more than
+# one account (separate homes per login) can point asm at either.
+DEFAULT_CODEX_DIR = Path.home() / ".codex"
+CODEX_DIR = Path(os.environ["CODEX_HOME"]).expanduser() if os.environ.get("CODEX_HOME") else DEFAULT_CODEX_DIR
 CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
+
+
+_codex_home_override: list[Path] | None = None
+
+
+def set_codex_homes(paths: list[str] | None) -> None:
+    """Pin the Codex homes to scan (from --codex-home); None restores discovery."""
+    global _codex_home_override
+    _codex_home_override = [Path(p).expanduser() for p in paths] if paths else None
+
+
+def codex_homes() -> list[Path]:
+    """Every Codex home to scan, primary first.
+
+    Codex keeps one home per login, so a second account lives in its own dir.
+    Resolution order: --codex-home, then ASM_CODEX_HOMES (os.pathsep-separated),
+    then CODEX_HOME plus any sibling ~/.codex-* dir that holds a sessions/ tree.
+    """
+    if _codex_home_override:
+        return _codex_home_override
+    configured = os.environ.get("ASM_CODEX_HOMES")
+    if configured:
+        return [Path(p).expanduser() for p in configured.split(os.pathsep) if p]
+    homes = [CODEX_DIR]
+    for candidate in sorted(Path.home().glob(".codex-*")):
+        if candidate.is_dir() and (candidate / "sessions").is_dir() and candidate not in homes:
+            homes.append(candidate)
+    return homes
 
 
 def migrate_legacy_data_dir() -> bool:

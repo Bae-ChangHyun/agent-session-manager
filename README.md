@@ -173,6 +173,13 @@ asm import session <session-id>   # Move one session; direction inferred from th
 asm import mcp --to codex         # Move MCP servers between agents
 ```
 
+**More than one Codex account?** Codex keeps one home per login, so a second
+account lives in its own directory. asm scans `CODEX_HOME` (or `~/.codex`) plus
+any sibling `~/.codex-*` that holds a `sessions/` tree, so `asm import session
+<id>` finds a session in either. Point it somewhere else with `--codex-home`
+(repeatable) or `ASM_CODEX_HOMES` (`os.pathsep`-separated), and run
+`asm import homes` to see exactly what is being scanned.
+
 `asm import list` sorts by **last activity**, not by the timestamp in a Codex
 rollout filename (that one is when the session *started*), and prints that
 activity time so the ordering is visible. `asm import --help` spells out the

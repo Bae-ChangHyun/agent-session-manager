@@ -534,6 +534,24 @@ _BACKUP_RESTORERS = {
 def cmd_backup(args) -> int:
     from asm.services import backup
 
+    if args.action == "homes":
+        from asm.models import codex_homes
+
+        homes = []
+        for home in codex_homes():
+            sessions = home / "sessions"
+            count = sum(1 for _ in sessions.rglob("rollout-*.jsonl")) if sessions.is_dir() else 0
+            homes.append({"path": str(home), "exists": home.is_dir(), "sessions": count})
+        if args.json:
+            print(json.dumps({"codex_homes": homes}, ensure_ascii=False, indent=2))
+            return 0
+        print("Codex homes scanned (--codex-home / ASM_CODEX_HOMES override this):")
+        for h in homes:
+            mark = " " if h["exists"] else "!"
+            print(f" {mark} {h['path']}  {h['sessions']} sessions"
+                  + ("" if h["exists"] else "  (missing)"))
+        return 0
+
     if args.action == "list":
         items = backup.list_backups()
         if args.json:
@@ -601,6 +619,24 @@ def cmd_backup(args) -> int:
 
 def cmd_recovery(args) -> int:
     from asm.services import recovery
+
+    if args.action == "homes":
+        from asm.models import codex_homes
+
+        homes = []
+        for home in codex_homes():
+            sessions = home / "sessions"
+            count = sum(1 for _ in sessions.rglob("rollout-*.jsonl")) if sessions.is_dir() else 0
+            homes.append({"path": str(home), "exists": home.is_dir(), "sessions": count})
+        if args.json:
+            print(json.dumps({"codex_homes": homes}, ensure_ascii=False, indent=2))
+            return 0
+        print("Codex homes scanned (--codex-home / ASM_CODEX_HOMES override this):")
+        for h in homes:
+            mark = " " if h["exists"] else "!"
+            print(f" {mark} {h['path']}  {h['sessions']} sessions"
+                  + ("" if h["exists"] else "  (missing)"))
+        return 0
 
     if args.action == "list":
         items = recovery.list_recovery_items()
@@ -698,11 +734,14 @@ def _resolve_import_source(session_id: str):
     from pathlib import Path as _Path
 
     from asm.models import PROJECTS_DIR
-    from asm.services import codex_data
+    from asm.services import agent_import, codex_data
 
     encoded = _find_claude_project_dir(session_id)
     if encoded:
         return "claude", _Path(PROJECTS_DIR) / encoded / f"{session_id}.jsonl"
+    rollout = agent_import.find_codex_rollout(session_id)
+    if rollout:
+        return "codex", rollout
     if codex_data.is_available():
         found = codex_data.find_session(session_id)
         if found:
@@ -737,6 +776,24 @@ def cmd_import(args) -> int:
         for name, reason in result.failed:
             print(f"  ! {name}: {reason}", file=sys.stderr)
         return 1 if result.failed else 0
+
+    if args.action == "homes":
+        from asm.models import codex_homes
+
+        homes = []
+        for home in codex_homes():
+            sessions = home / "sessions"
+            count = sum(1 for _ in sessions.rglob("rollout-*.jsonl")) if sessions.is_dir() else 0
+            homes.append({"path": str(home), "exists": home.is_dir(), "sessions": count})
+        if args.json:
+            print(json.dumps({"codex_homes": homes}, ensure_ascii=False, indent=2))
+            return 0
+        print("Codex homes scanned (--codex-home / ASM_CODEX_HOMES override this):")
+        for h in homes:
+            mark = " " if h["exists"] else "!"
+            print(f" {mark} {h['path']}  {h['sessions']} sessions"
+                  + ("" if h["exists"] else "  (missing)"))
+        return 0
 
     if args.action == "list":
         plan = (agent_import.plan_sessions_to_codex() if args.to == "codex"
@@ -777,7 +834,8 @@ def cmd_import(args) -> int:
         return 0
 
     candidate = plan.new[0]
-    print(f"{source} -> {target}: {candidate.turns} turns  cwd={candidate.cwd}")
+    origin = f"  [{path.parents[4].name}]" if source == "codex" and len(path.parents) > 4 else ""
+    print(f"{source} -> {target}: {candidate.turns} turns  cwd={candidate.cwd}{origin}")
     print(f"  title: {candidate.title[:70]}")
     if args.dry_run:
         return 0
@@ -897,7 +955,14 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
             "They carry zero token usage, so a moved session is never priced twice.\n"
             "The destination folder is chosen from the session's own cwd.\n"
             "\n"
+            "Codex keeps one home per login, so a second account lives in its own\n"
+            "directory. asm scans CODEX_HOME (or ~/.codex) plus any sibling ~/.codex-*\n"
+            "holding a sessions/ tree. Override that with --codex-home (repeatable) or\n"
+            "ASM_CODEX_HOMES (os.pathsep-separated); `asm import homes` prints what is\n"
+            "actually being scanned.\n"
+            "\n"
             "Examples:\n"
+            "  asm import homes                       # which Codex homes are scanned\n"
             "  asm import list --to claude            # what could move Codex -> Claude\n"
             "  asm import session <id> --dry-run      # direction inferred from the id\n"
             "  asm import session <id> --yes\n"
@@ -905,8 +970,9 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("action", choices=["session", "mcp", "list"],
-                   help="session: move one session by id; mcp: move MCP servers; list: importable sessions")
+    p.add_argument("action", choices=["session", "mcp", "list", "homes"],
+                   help="session: move one session by id; mcp: move MCP servers; "
+                        "list: importable sessions; homes: Codex homes being scanned")
     p.add_argument("session_id", nargs="?", help="session id (action=session)")
     p.add_argument("--to", choices=["codex", "claude"], default="claude",
                    help="destination agent for mcp/list (default: claude); session infers it from the id")
