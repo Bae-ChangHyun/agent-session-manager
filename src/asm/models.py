@@ -65,6 +65,17 @@ CODEX_DIR = Path(os.environ["CODEX_HOME"]).expanduser() if os.environ.get("CODEX
 CODEX_SESSIONS_DIR = CODEX_DIR / "sessions"
 
 
+def resolve_session_dirs(current: Path) -> list[Path]:
+    """Codex sessions/ dirs to scan for ``current``.
+
+    A caller that repointed its own constant (tests, a pinned home) keeps that
+    exact dir; otherwise every configured home is scanned.
+    """
+    if current != CODEX_DIR / "sessions":
+        return [current]
+    return [home / "sessions" for home in codex_homes() if (home / "sessions").is_dir()]
+
+
 _codex_home_override: list[Path] | None = None
 
 

@@ -709,9 +709,7 @@ def read_codex_rollout(path: Path) -> tuple[list[Turn], str, str]:
 
 def codex_session_dirs() -> list[Path]:
     """sessions/ tree of every Codex home, so a second account is not invisible."""
-    if CODEX_SESSIONS_DIR != models.CODEX_DIR / "sessions":
-        return [CODEX_SESSIONS_DIR]  # explicitly repointed (tests, --codex-home)
-    return [home / "sessions" for home in models.codex_homes() if (home / "sessions").is_dir()]
+    return models.resolve_session_dirs(CODEX_SESSIONS_DIR)
 
 
 def codex_rollout_files() -> list[Path]:

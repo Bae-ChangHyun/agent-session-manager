@@ -249,7 +249,9 @@ def test_recovery_restore_flow(monkeypatch, tmp_path: Path):
     from asm.services import cleaner, recovery
     from tests.test_feature_smoke import _fake_send2trash
     monkeypatch.setattr(recovery, "CLAUDE_DIR", Path(env["claude_dir"]))
-    monkeypatch.setattr(recovery, "CODEX_DIR", tmp_path / "no-codex")
+    from asm.services import codex_data as _codex_data
+
+    monkeypatch.setattr(_codex_data, "CODEX_SESSIONS_DIR", tmp_path / "no-codex" / "sessions")
     monkeypatch.setattr(recovery, "RECOVERY_BASE_DIR", tmp_path / "recovery")
     monkeypatch.setattr(recovery, "send2trash", _fake_send2trash)
 

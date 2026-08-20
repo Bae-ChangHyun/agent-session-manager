@@ -172,11 +172,8 @@ asm import session <session-id>   # 세션 1개 이동(방향은 id로 자동 �
 asm import mcp --to codex         # MCP 서버 이동
 ```
 
-**Codex 계정이 여러 개라면?** Codex는 로그인마다 홈이 하나씩이라 두 번째 계정은 별도
-디렉터리에 있다. asm은 `CODEX_HOME`(없으면 `~/.codex`)과, `sessions/`를 가진 형제
-`~/.codex-*` 디렉터리를 함께 훑는다. 그래서 `asm import session <id>`가 어느 쪽에 있든
-찾아낸다. 경로가 다르면 `--codex-home`(반복 지정) 또는 `ASM_CODEX_HOMES`(`os.pathsep`
-구분)로 지정하고, `asm import homes`로 실제 훑는 위치를 확인한다.
+Codex에 계정을 두 개 이상 쓰고 있다면 로그인마다 홈이 따로 생긴다 —
+[Codex 계정이 여러 개일 때](docs/multiple-codex-accounts.ko.md) 참고.
 
 `asm import list`는 **마지막 활동 시각** 기준으로 정렬한다 — Codex rollout 파일명의
 시각은 세션을 *시작한* 때라 순서가 다르게 보인다. 그래서 활동 시각을 함께 출력해

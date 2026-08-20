@@ -11,7 +11,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from asm.models import CLAUDE_DIR, CODEX_DIR, RECOVERY_BASE_DIR, RecoveryInfo
+from asm.models import CLAUDE_DIR, RECOVERY_BASE_DIR, RecoveryInfo
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,11 @@ _MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
 def _validate_original_path(path: Path) -> Path:
+    from asm.services import codex_data
+
     resolved = path.resolve()
-    roots = (CLAUDE_DIR.resolve(), CODEX_DIR.resolve())
+    codex_roots = [d.parent.resolve() for d in codex_data._session_dirs() if d.parent.exists()]
+    roots = (CLAUDE_DIR.resolve(), *codex_roots)
     if not any(resolved.is_relative_to(root) for root in roots):
         raise ValueError(f"Recovery path outside managed data dirs: {path}")
     return resolved
