@@ -17,16 +17,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab.migrate": {"en": "Migrate", "ko": "마이그레이션"},
     "tab.backups": {"en": "Backups", "ko": "백업"},
     "tab.artifacts": {"en": "Artifacts", "ko": "아티팩트"},
-    "tab.agent_import": {"en": "Agent Import", "ko": "에이전트 가져오기"},
+    "tab.agent_import": {"en": "Claude ↔ Codex", "ko": "Claude ↔ Codex"},
     "imp.loading": {
-        "en": "Scanning Claude Code and Codex for importable items...",
-        "ko": "Claude Code와 Codex에서 가져올 항목을 스캔 중...",
+        "en": "Scanning Claude Code and Codex for movable sessions and MCP servers...",
+        "ko": "Claude Code와 Codex에서 옮길 수 있는 세션·MCP 서버를 스캔 중...",
     },
     "imp.header": {
-        "en": "{mode}  ·  {pending} importable, {selected} selected  ·  1-4: mode  ·  space: toggle  ·  a: all/none  ·  i: import",
-        "ko": "{mode}  ·  가져올 수 있음 {pending}개, 선택 {selected}개  ·  1-4: 모드  ·  space: 선택  ·  a: 전체/해제  ·  i: 가져오기",
+        "en": "{mode}  ·  {pending} movable, {selected} selected  ·  1-4: direction  ·  space: pick  ·  a: all/none  ·  i: move",
+        "ko": "{mode}  ·  옮길 수 있음 {pending}개, 선택 {selected}개  ·  1-4: 방향  ·  space: 선택  ·  a: 전체/해제  ·  i: 옮기기",
     },
-    "imp.new": {"en": "importable", "ko": "가져오기 가능"},
+    "imp.new": {"en": "movable", "ko": "옮기기 가능"},
     "imp.skip": {"en": "skipped", "ko": "건너뜀"},
     "imp.nothing": {"en": "Nothing selected to import.", "ko": "가져올 항목이 선택되지 않았습니다."},
     "imp.confirm": {

@@ -23,10 +23,10 @@ DIRECTIONS = [
 
 class AgentImportPane(Container):
     BINDINGS = [
-        ("1", "pick(0)", "MCP C→X"),
-        ("2", "pick(1)", "MCP X→C"),
-        ("3", "pick(2)", "Sess C→X"),
-        ("4", "pick(3)", "Sess X→C"),
+        ("1", "pick(0)", "MCP: Claude→Codex"),
+        ("2", "pick(1)", "MCP: Codex→Claude"),
+        ("3", "pick(2)", "Sessions: Claude→Codex"),
+        ("4", "pick(3)", "Sessions: Codex→Claude"),
         ("space", "toggle", "Toggle"),
         ("a", "toggle_all", "All/None"),
         ("i", "run_import", "Import"),

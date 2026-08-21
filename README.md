@@ -68,7 +68,7 @@ same view filtered to **Claude** and to **Codex**:
 - Browse every page you've published with Claude Code's **Artifact tool** — scanned straight out of your session history, newest first
 - Open in the browser (`Enter`/`o`) or copy the URL (`c`) without leaving the terminal; also available as `asm artifacts` (`--json` for scripts)
 
-### Agent Import (Claude Code ↔ Codex)
+### Claude ↔ Codex (`F8` tab)
 - **MCP servers, both ways:** compares `~/.codex/config.toml` with `~/.claude.json`, lists what only one side has, and adds it through that agent's own `mcp add` CLI (so file format and comments stay intact). Auth headers and env vars are carried over verbatim; `codex mcp add` can't express HTTP headers, so those are appended as `[mcp_servers.<name>.http_headers]`
 - **Sessions, both ways:** Claude transcripts become Codex rollout threads and vice versa — verified end-to-end by resuming the result in the real CLI. Claude→Codex writes the same `content_sha256` ledger the official importer uses, so it won't duplicate what Codex already imported, and unlike `/import` you pick the sessions (no 30-day / 50-session cap)
 - Imported copies carry **zeroed token usage**, so a session that moved never gets priced twice
