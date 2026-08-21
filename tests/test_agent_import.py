@@ -822,3 +822,32 @@ def test_rollouts_and_lookup_span_every_home(monkeypatch, tmp_path):
     found = agent_import.find_codex_rollout("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
     assert found is not None and found.parents[4].name == ".codex-work"
     assert agent_import.find_codex_rollout("no-such-id") is None
+
+
+def test_title_skips_hash_prefixed_preamble(claude_session):
+    """A leading `# AGENTS.md ...` dump is injected context, not a label."""
+    rows = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s",
+            "cwd": "/work/proj",
+            "timestamp": "2026-08-01T00:00:00.000Z",
+            "message": {"role": "user", "content": "# AGENTS.md instructions for /home/x"},
+        },
+        {
+            "type": "user",
+            "uuid": "u2",
+            "sessionId": "s",
+            "cwd": "/work/proj",
+            "timestamp": "2026-08-01T00:00:01.000Z",
+            "message": {"role": "user", "content": "실제 질문"},
+        },
+    ]
+    target = claude_session.parent / "hash-preamble.jsonl"
+    target.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+
+    turns, _cwd, _tokens = agent_import.read_claude_session(target)
+    assert agent_import._title_of(turns) == "실제 질문"

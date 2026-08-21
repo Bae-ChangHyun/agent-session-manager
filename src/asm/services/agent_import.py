@@ -358,11 +358,14 @@ def read_claude_session(path: Path) -> tuple[list[Turn], str, int]:
 def _title_of(turns: list[Turn]) -> str:
     """Label a session by its first real user turn.
 
-    Harness preambles (`<recommended_plugins>`, `<teammate-message>`) are kept in
-    the transcript but make useless labels — every session would read the same.
+    Harness preambles (`<recommended_plugins>`, a leading `# AGENTS.md` dump) are
+    kept in the transcript but make useless labels — every session would read the
+    same. Matches the prefixes Claude's own reader treats as injected.
     """
     users = [turn for turn in turns if turn.role == "user"]
-    spoken = next((turn for turn in users if not turn.text.startswith("<")), None)
+    spoken = next(
+        (turn for turn in users if not turn.text.startswith(("<", "#"))), None
+    )
     chosen = spoken or (users[0] if users else turns[0])
     return chosen.text.replace("\n", " ")[:TITLE_MAX_CHARS]
 

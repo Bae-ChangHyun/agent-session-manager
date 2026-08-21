@@ -67,7 +67,7 @@
 - Claude Code **Artifact 도구**로 발행한 페이지를 세션 기록에서 찾아 최신순으로 나열
 - 터미널을 떠나지 않고 브라우저로 열기(`Enter`/`o`)·URL 복사(`c`) — `asm artifacts`(`--json`)로도 조회 가능
 
-### 에이전트 가져오기 (Claude Code ↔ Codex)
+### Claude ↔ Codex (`F8` 탭)
 - **MCP 서버 양방향:** `~/.codex/config.toml`과 `~/.claude.json`을 비교해 한쪽에만 있는 항목을 찾고, 각 에이전트의 `mcp add` CLI로 추가한다(파일 포맷·주석 보존). 인증 헤더와 env는 그대로 옮기며, `codex mcp add`가 HTTP 헤더를 표현하지 못해 그 부분만 `[mcp_servers.<name>.http_headers]`로 덧붙인다
 - **세션 양방향:** Claude 대화록 ↔ Codex rollout 스레드 변환 — 실제 CLI에서 resume해 맥락이 복원되는 것까지 확인했다. Claude→Codex는 공식 importer와 같은 `content_sha256` 원장에 기록해 Codex가 이미 가져온 세션을 중복 생성하지 않고, `/import`와 달리 원하는 세션만 고를 수 있다(30일·50개 제한 없음)
 - 가져온 사본은 **토큰 사용량이 0**으로 기록돼, 옮긴 세션이 두 번 과금 집계되지 않는다

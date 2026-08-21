@@ -55,7 +55,7 @@ class CCTuiApp(App):
         Binding("f5", "tab('tab-migrate')", "Migrate"),
         Binding("f6", "tab('tab-backups')", "Backups"),
         Binding("f7", "tab('tab-artifacts')", "Artifacts"),
-        Binding("f8", "tab('tab-agent-import')", "Agent Import"),
+        Binding("f8", "tab('tab-agent-import')", "Claude↔Codex"),
     ]
 
     def __init__(self, target_path: str | None = None, source: str = "all", **kwargs):
