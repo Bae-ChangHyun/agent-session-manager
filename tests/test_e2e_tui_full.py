@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from asm.app import CCTuiApp
+from tests.async_utils import run_async_test
 from tests.test_codex_data import _write_rollout_real_layout
 from tests.test_feature_smoke import _setup_fake_claude
 
@@ -25,7 +26,7 @@ def _run_app(coro_body, **app_kwargs):
             await coro_body(app, pilot)
         return app
 
-    return asyncio.run(run())
+    return run_async_test(run())
 
 
 async def _settle(pilot, seconds=0.5):
@@ -132,6 +133,31 @@ def test_projects_preview_renders_messages(monkeypatch, tmp_path: Path):
         body_text = str(app.query_one("#project-detail-body", Static).render())
         assert "alpha prompt" in body_text and "alpha answer" in body_text
         assert f"asm resume {env['session_id']}" in body_text
+
+    _run_app(body)
+
+
+def test_projects_codex_preview_preserves_recorded_resume_cwd(monkeypatch, tmp_path: Path):
+    _setup_fake_claude(monkeypatch, tmp_path)
+    from asm.services import codex_data
+
+    codex_root = tmp_path / "codex-sessions"
+    rollout = codex_root / "2026" / "07" / "01" / "rollout-resume-cwd.jsonl"
+    cwd = str(tmp_path / "codex-work")
+    _write_rollout_real_layout(rollout, "resume-cwd", cwd, ["gpt-5.5"], None)
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", codex_root)
+    codex_data.refresh()
+
+    async def body(app, pilot):
+        pane = app.query_one("ProjectsPane")
+        pane._load_messages(
+            "resume-cwd",
+            str(rollout),
+            "codex",
+            cwd,
+        )
+        await _settle(pilot)
+        assert pane._preview_target == ("resume-cwd", "codex", cwd)
 
     _run_app(body)
 

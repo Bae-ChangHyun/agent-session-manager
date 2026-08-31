@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -15,6 +14,7 @@ from asm.screens import migrate as migrate_screen
 from asm.screens import projects as projects_screen
 from asm.services import backup as backup_service
 from asm.services import claude_data, cleaner, migrate
+from tests.async_utils import run_async_test
 
 def _fake_send2trash(path: str) -> None:
     target = Path(path)
@@ -284,15 +284,17 @@ def test_service_feature_smoke(monkeypatch, tmp_path: Path):
 
     export_path = backup_service.export_backup(config_backup, dest_dir=str(tmp_path / "exports"))
     assert export_path is not None
+    assert backup_service.delete_backup(config_backup) is True
     imported_path = backup_service.import_backup(export_path)
     assert imported_path is not None
     assert backup_service.delete_backup(imported_path) is True
 
+    target_path = str(Path(env["home"]) / "work" / "project-gamma")
     result = migrate.migrate_sessions(
         source_path=env["project_a"],
-        target_path=str(Path(env["home"]) / "work" / "project-gamma"),
+        target_path=target_path,
         source_encoded=env["encoded_a"],
-        target_encoded="project-gamma",
+        target_encoded=models.encode_path(target_path),
         session_ids=[env["session_id"]],
     )
     assert result.success is True
@@ -335,7 +337,7 @@ def test_app_feature_smoke(monkeypatch, tmp_path: Path):
             assert app.query_one("#session-table") is not None
             assert app.query_one("#backups-table") is not None
 
-    asyncio.run(run_app())
+    run_async_test(run_app())
 
 
 def test_projects_filter_by_session_title(monkeypatch, tmp_path: Path):
@@ -380,4 +382,4 @@ def test_projects_filter_by_session_title(monkeypatch, tmp_path: Path):
             assert env["project_b"] not in project_paths
             assert env["session_id"] in session_ids
 
-    asyncio.run(run_app())
+    run_async_test(run_app())

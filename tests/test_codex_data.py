@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from asm.services import codex_data
 from asm.services import pricing
 
@@ -64,6 +66,94 @@ class TestCodexData:
 
             msgs = codex_data.get_session_messages("aaaa", ses[0].project_dir)
             assert {m["type"] for m in msgs} == {"user", "assistant"}
+
+    def test_find_session_requires_exact_or_unique_prefix(self, tmp_path: Path):
+        sessions = tmp_path / "sessions" / "2026" / "06" / "01"
+        _write_rollout(sessions / "rollout-2026-06-01T09-00-00-abc111.jsonl", "abc111", "/work/a", "gpt-5", {}, "a")
+        _write_rollout(sessions / "rollout-2026-06-01T09-00-01-abc222.jsonl", "abc222", "/work/b", "gpt-5", {}, "b")
+        codex_data.refresh()
+
+        with patch.object(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "sessions"):
+            assert codex_data.find_session("abc111").session_id == "abc111"
+            assert codex_data.find_session("abc2").session_id == "abc222"
+            with pytest.raises(codex_data.AmbiguousSessionIdError, match="multiple Codex sessions"):
+                codex_data.find_session("abc")
+            assert codex_data.find_session("2026") is None
+
+    def test_find_session_fails_when_a_codex_home_scan_is_incomplete(
+        self, monkeypatch, tmp_path: Path
+    ):
+        good = tmp_path / "good"
+        blocked = tmp_path / "blocked"
+        blocked.mkdir()
+        _write_rollout(
+            good / "2026" / "06" / "01" / "rollout-good.jsonl",
+            "shared-prefix-one",
+            "/work/a",
+            "gpt-5",
+            {},
+            "a",
+        )
+        original_rglob = Path.rglob
+
+        def fail_blocked(path: Path, pattern: str):
+            if path == blocked:
+                raise PermissionError("denied")
+            return original_rglob(path, pattern)
+
+        monkeypatch.setattr(codex_data, "_session_dirs", lambda: [good, blocked])
+        monkeypatch.setattr(Path, "rglob", fail_blocked)
+
+        with pytest.raises(codex_data.CodexScanError, match="Unable to scan Codex sessions"):
+            codex_data.find_session("shared-prefix")
+
+    def test_find_session_fails_when_any_rollout_is_malformed(self, monkeypatch, tmp_path: Path):
+        sessions = tmp_path / "sessions"
+        _write_rollout(
+            sessions / "2026" / "06" / "01" / "rollout-good.jsonl",
+            "shared-prefix-one",
+            "/work/a",
+            "gpt-5",
+            {},
+            "a",
+        )
+        malformed = sessions / "2026" / "06" / "01" / "rollout-broken.jsonl"
+        malformed.write_text("{broken\n")
+        monkeypatch.setattr(codex_data, "_session_dirs", lambda: [sessions])
+
+        with pytest.raises(codex_data.CodexScanError, match="Malformed Codex session"):
+            codex_data.find_session("shared-prefix")
+
+    def test_total_session_count_fails_when_a_home_scan_is_incomplete(
+        self, monkeypatch, tmp_path: Path
+    ):
+        blocked = tmp_path / "blocked"
+        blocked.mkdir()
+        monkeypatch.setattr(codex_data, "_session_dirs", lambda: [blocked])
+        monkeypatch.setattr(Path, "rglob", lambda *_: (_ for _ in ()).throw(PermissionError("denied")))
+
+        with pytest.raises(codex_data.CodexScanError, match="Unable to scan Codex sessions"):
+            codex_data.total_session_count()
+
+    @pytest.mark.parametrize("session_ref", ["../rollout", "../../history", "/tmp/session", r"..\rollout"])
+    def test_find_session_rejects_path_syntax(self, tmp_path: Path, session_ref: str):
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        with (
+            patch.object(codex_data, "CODEX_SESSIONS_DIR", sessions),
+            pytest.raises(ValueError, match="session id"),
+        ):
+            codex_data.find_session(session_ref)
+
+    def test_move_session_stops_when_snapshot_fails(self, monkeypatch, tmp_path: Path):
+        rollout = tmp_path / "sessions" / "2026" / "06" / "01" / "rollout-test.jsonl"
+        _write_rollout(rollout, "move-me", "/work/old", "gpt-5", {}, "move")
+        before = rollout.read_text()
+        monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", tmp_path / "sessions")
+        monkeypatch.setattr("asm.services.recovery.create_recovery_snapshot", lambda *_: None)
+
+        assert codex_data.move_session(str(rollout), "/work/new") is False
+        assert rollout.read_text() == before
 
     def test_get_sessions_by_paths_ignores_scan_limit(self, tmp_path: Path):
         sessions = _setup(tmp_path)

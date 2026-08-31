@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from asm.services.claude_data import get_session_messages, get_session_to_project_map
 
@@ -28,6 +31,140 @@ class TestSessionMessages:
             messages = get_session_messages(session_id, project_dir="proj-right", limit=10)
 
         assert messages == [{"type": "user", "content": "right project"}]
+
+    def test_get_session_messages_rejects_path_traversal(self, tmp_path: Path):
+        projects_dir = tmp_path / "projects"
+        project_dir = projects_dir / "proj"
+        project_dir.mkdir(parents=True)
+        outside = tmp_path / "history.jsonl"
+        outside.write_text('{"type":"user","message":{"content":"private"}}\n')
+
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            pytest.raises(ValueError, match="session id"),
+        ):
+            get_session_messages("../../history", project_dir="proj", limit=10)
+
+
+class TestProjectConfigTrust:
+    def test_malformed_config_is_not_treated_as_empty_registry(self, tmp_path: Path):
+        from asm.services.claude_data import ClaudeConfigError, get_sessions, load_claude_json
+
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text("{broken")
+        projects_dir = tmp_path / ".claude" / "projects"
+        session_dir = projects_dir / "-work-live"
+        session_dir.mkdir(parents=True)
+        (session_dir / "session.jsonl").write_text("{}\n")
+
+        with (
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+        ):
+            with pytest.raises(ClaudeConfigError, match="Unable to read Claude project config"):
+                load_claude_json()
+            sessions = get_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].is_orphaned is False
+
+    def test_orphan_listing_requires_trusted_project_config(self, tmp_path: Path):
+        from asm.services.claude_data import ClaudeConfigError, get_orphaned_sessions
+
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text("{broken")
+        projects_dir = tmp_path / ".claude" / "projects"
+        (projects_dir / "-work-live").mkdir(parents=True)
+
+        with (
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            pytest.raises(ClaudeConfigError, match="Unable to read Claude project config"),
+        ):
+            get_orphaned_sessions()
+
+    def test_missing_config_does_not_make_existing_sessions_orphaned(self, tmp_path: Path):
+        from asm.services.claude_data import ClaudeConfigError, get_orphaned_sessions, get_sessions
+
+        claude_json = tmp_path / ".claude.json"
+        projects_dir = tmp_path / ".claude" / "projects"
+        session_dir = projects_dir / "-work-live"
+        session_dir.mkdir(parents=True)
+
+        with (
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+        ):
+            sessions = get_sessions()
+            with pytest.raises(ClaudeConfigError, match="Claude project config is missing"):
+                get_orphaned_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].is_orphaned is False
+
+    def test_unreadable_config_stops_orphan_listing(self, tmp_path: Path):
+        from asm.services.claude_data import ClaudeConfigError, get_orphaned_sessions
+
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text("{}")
+        projects_dir = tmp_path / ".claude" / "projects"
+        projects_dir.mkdir(parents=True)
+
+        with (
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch.object(Path, "read_text", side_effect=PermissionError("denied")),
+            pytest.raises(ClaudeConfigError, match="Unable to read Claude project config"),
+        ):
+            get_orphaned_sessions()
+
+
+class TestSessionResolution:
+    def test_resolve_session_ref_allows_only_unique_prefix(self, tmp_path: Path):
+        from asm.services.claude_data import AmbiguousSessionIdError, resolve_session_ref
+
+        projects_dir = tmp_path / "projects"
+        left = projects_dir / "left"
+        right = projects_dir / "right"
+        left.mkdir(parents=True)
+        right.mkdir(parents=True)
+        (left / "abc111.jsonl").write_text("{}\n")
+        (right / "abc222.jsonl").write_text("{}\n")
+
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
+            assert resolve_session_ref("abc1") == ("left", "abc111")
+            with pytest.raises(AmbiguousSessionIdError, match="multiple Claude sessions"):
+                resolve_session_ref("abc")
+            assert resolve_session_ref("missing") is None
+
+    @pytest.mark.parametrize("session_ref", ["../history", "../../history", "/tmp/session", r"..\history"])
+    def test_resolve_session_ref_rejects_path_syntax(self, tmp_path: Path, session_ref: str):
+        from asm.services.claude_data import resolve_session_ref
+
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            pytest.raises(ValueError, match="session id"),
+        ):
+            resolve_session_ref(session_ref)
+
+    def test_resolve_session_ref_honors_project_scope(self, tmp_path: Path):
+        from asm.services.claude_data import resolve_session_ref
+
+        projects_dir = tmp_path / "projects"
+        left = projects_dir / "left"
+        right = projects_dir / "right"
+        left.mkdir(parents=True)
+        right.mkdir(parents=True)
+        (left / "duplicate.jsonl").write_text("{}\n")
+        (right / "duplicate.jsonl").write_text("{}\n")
+
+        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
+            assert resolve_session_ref("duplicate", project_ref="right") == (
+                "right",
+                "duplicate",
+            )
 
 
 class TestSessionProjectMap:
@@ -64,21 +201,76 @@ class TestProjectSessionResolution:
         encoded = projects_dir / encode_path(abs_path)
         encoded.mkdir(parents=True)
 
-        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text(json.dumps({"projects": {abs_path: {}}}))
+
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+        ):
             resolved = _resolve_project_dir(abs_path)
 
         assert resolved is not None
         assert resolved.parent == projects_dir
 
+    @pytest.mark.parametrize("project_ref", [".", "..", "left/right", r"left\right"])
+    def test_resolve_project_dir_rejects_non_component_refs(
+        self, tmp_path: Path, project_ref: str
+    ):
+        from asm.services.claude_data import _resolve_project_dir
+
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            pytest.raises(ValueError, match="project reference"),
+        ):
+            _resolve_project_dir(project_ref)
+
+    def test_resolve_project_dir_rejects_symlink_escape(self, tmp_path: Path):
+        from asm.services.claude_data import _resolve_project_dir
+
+        projects_dir = tmp_path / "projects"
+        projects_dir.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (projects_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            pytest.raises(ValueError, match="project reference"),
+        ):
+            _resolve_project_dir("linked")
+
+    def test_resolve_project_dir_accepts_unregistered_recorded_cwd(self, tmp_path: Path):
+        from asm.services.claude_data import _resolve_project_dir
+        from asm.models import encode_path
+
+        projects_dir = tmp_path / "projects"
+        project_path = "/work/imported"
+        project_dir = projects_dir / encode_path(project_path)
+        project_dir.mkdir(parents=True)
+        (project_dir / "session.jsonl").write_text(
+            json.dumps({"type": "user", "cwd": project_path}) + "\n"
+        )
+
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch("asm.services.claude_data.CLAUDE_JSON", tmp_path / "missing.json"),
+        ):
+            assert _resolve_project_dir(project_path) == project_dir
+
     def test_get_project_sessions_uses_index_and_jsonl(self, tmp_path: Path):
         from asm.services.claude_data import get_project_sessions
         from asm.models import encode_path
-        import json
 
         projects_dir = tmp_path / "projects"
         abs_path = "/work/web-app"
         d = projects_dir / encode_path(abs_path)
         d.mkdir(parents=True)
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text(json.dumps({"projects": {abs_path: {}}}))
         sid = "11111111-2222-3333-4444-555555555555"
         (d / f"{sid}.jsonl").write_text('{"type":"user","message":{"content":"hi"}}\n')
         (d / "sessions-index.json").write_text(json.dumps({
@@ -86,7 +278,10 @@ class TestProjectSessionResolution:
             "entries": [{"sessionId": sid, "summary": "indexed summary", "gitBranch": "main"}],
         }))
 
-        with patch("asm.services.claude_data.PROJECTS_DIR", projects_dir):
+        with (
+            patch("asm.services.claude_data.PROJECTS_DIR", projects_dir),
+            patch("asm.services.claude_data.CLAUDE_JSON", claude_json),
+        ):
             sessions = get_project_sessions(abs_path)
 
         assert len(sessions) == 1

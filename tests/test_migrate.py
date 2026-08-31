@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 from asm.services import migrate
+from tests.async_utils import run_async_test
 
 SRC = "/home/me"
 TGT = "/home/me/work/proj"  # source path is a prefix of the target — the
@@ -98,4 +98,4 @@ def test_migrate_pane_defaults_to_no_selection(monkeypatch, tmp_path: Path):
             await pilot.pause()
             assert len(app.screen_stack) == 1  # no confirm screen pushed
 
-    asyncio.run(run())
+    run_async_test(run())

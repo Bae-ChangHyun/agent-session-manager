@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 from asm.app import CCTuiApp
 from asm.screens.agent_import import AgentImportPane
 from asm.services import agent_import, codex_data, ledger
+from tests.async_utils import run_async_test
 from tests.test_feature_smoke import _setup_fake_claude
 
 
@@ -43,7 +44,7 @@ def _run_pane(coro_body):
             pane = app.query_one(AgentImportPane)
             await coro_body(app, pilot, pane)
 
-    asyncio.run(run())
+    run_async_test(run())
 
 
 def _run_app(coro_body):
@@ -56,7 +57,7 @@ def _run_app(coro_body):
             await coro_body(app, pilot)
         return app
 
-    return asyncio.run(run())
+    return run_async_test(run())
 
 
 def _isolate(monkeypatch, tmp_path: Path) -> Path:

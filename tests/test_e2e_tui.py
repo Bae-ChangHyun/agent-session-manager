@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from asm.app import CCTuiApp
+from tests.async_utils import run_async_test
 from tests.test_feature_smoke import _setup_fake_claude
 
 
@@ -26,7 +27,7 @@ def _run_app(coro_body):
             await coro_body(app, pilot)
         return app
 
-    return asyncio.run(run())
+    return run_async_test(run())
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ def test_cli_backup_export_import_roundtrip(monkeypatch, capsys, tmp_path: Path)
     assert code == 0
     archive = out.strip()
     assert archive.endswith(".tar.gz") and Path(archive).exists()
+    Path(backup_path).unlink()
 
     code, out = _run(monkeypatch, capsys, "backup", "import", archive)
     assert code == 0

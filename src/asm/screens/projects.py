@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from pathlib import Path, PurePath
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Static, Tree
@@ -19,12 +21,14 @@ from asm.screens.file_editor import FileEditorScreen
 INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.local.md")
 from asm.services.backup import create_config_backup
 from asm.services.claude_data import (
+    ClaudeConfigError,
     find_duplicate_sessions,
     find_empty_sessions,
+    get_orphaned_sessions,
     get_project_sessions,
     get_projects,
+    get_session_cwd as get_claude_session_cwd,
     get_session_messages,
-    get_sessions,
     load_claude_json,
     remove_project_from_json,
 )
@@ -125,6 +129,7 @@ class ProjectsPane(Container):
         self._codex_paths: set[str] = set()
         self._project_costs: dict[str, float] = {}
         self._empty_sessions: list[dict] = []
+        self._config_error: str | None = None
         self._filter_query = ""
         self._sort_mode = "path"
         # Session-title search: per-project (SessionDetail, source) cache built
@@ -155,8 +160,16 @@ class ProjectsPane(Container):
     def _load_projects(self) -> None:
         from asm.services import codex_data
         from asm.services.claude_data import get_project_cost_map
-        projects = get_projects()
-        orphaned_sessions = [s for s in get_sessions() if s.is_orphaned]
+        config_error = None
+        try:
+            projects = get_projects()
+            orphaned_sessions = get_orphaned_sessions()
+            project_costs = get_project_cost_map()
+        except ClaudeConfigError as exc:
+            projects = []
+            orphaned_sessions = []
+            project_costs = {}
+            config_error = str(exc)
         duplicates = find_duplicate_sessions()
         # Merge Codex working directories into the same project tree, so both
         # agents live in one view. Codex cwds not already known to Claude become
@@ -169,7 +182,6 @@ class ProjectsPane(Container):
                 if cp.path not in claude_paths:
                     projects.append(cp)
         empty_sessions = find_empty_sessions()
-        project_costs = get_project_cost_map()
         if codex_data.is_available():
             for cwd, cost in codex_data.get_project_cost_map().items():
                 project_costs[cwd] = project_costs.get(cwd, 0.0) + cost
@@ -181,20 +193,23 @@ class ProjectsPane(Container):
             empty_sessions = []
         self.app.call_from_thread(
             self._set_project_data, projects, orphaned_sessions, duplicates, codex_paths,
-            empty_sessions, project_costs,
+            empty_sessions, project_costs, config_error,
         )
 
     def _set_project_data(self, projects, orphaned_sessions, duplicates=None, codex_paths=None,
-                          empty_sessions=None, project_costs=None) -> None:
+                          empty_sessions=None, project_costs=None, config_error=None) -> None:
         self._all_projects = projects
         self._all_orphaned_sessions = orphaned_sessions or []
         self._all_duplicates = duplicates or {}
         self._codex_paths = codex_paths or set()
         self._empty_sessions = empty_sessions or []
         self._project_costs = project_costs or {}
+        self._config_error = config_error
         self._session_cache = None
         self._session_cache_gen += 1
         self._build_tree_from_state()
+        if config_error:
+            self.app.notify(config_error, severity="error")
 
     def _build_tree_from_state(self) -> None:
         projects = list(self._all_projects)
@@ -689,7 +704,7 @@ class ProjectsPane(Container):
             detail += "\n[bold]Instructions:[/]\n  " + "   ".join(marks) + "\n"
 
         # Config 내용 표시
-        config_data = load_claude_json().get("projects", {}).get(p.path, {})
+        config_data = {} if self._config_error else load_claude_json().get("projects", {}).get(p.path, {})
         if config_data:
             detail += "\n[bold]Config:[/]\n"
             cost = config_data.get("lastCost")
@@ -721,15 +736,42 @@ class ProjectsPane(Container):
 
     def _load_messages(self, session_id: str, project_dir: str | None, source: str = "claude",
                         project_path: str | None = None) -> None:
-        if source == "codex":
-            from asm.services import codex_data
-            messages = codex_data.get_session_messages(session_id, project_dir, limit=50)
-            cwd = None  # Codex resumes by id, no working dir needed
-        else:
-            messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
-            # Prefer the real project path; fall back to decoding the dir name.
-            cwd = project_path or (decode_path_hint(project_dir) if project_dir else None)
-        self.app.call_from_thread(self._show_messages, session_id, messages, source, cwd, project_dir)
+        resume_error = None
+        messages = []
+        cwd = None
+        try:
+            if not project_dir:
+                raise ValueError(f"Session has no project data: {session_id}")
+            if source == "codex":
+                from asm.services import codex_data
+
+                messages = codex_data.get_session_messages(session_id, project_dir, limit=50)
+            else:
+                messages = get_session_messages(session_id, project_dir=project_dir, limit=50)
+        except (ValueError, OSError, RuntimeError) as exc:
+            resume_error = str(exc)
+        try:
+            if not project_dir:
+                raise ValueError(f"Session has no project data: {session_id}")
+            if source == "codex":
+                cwd = codex_data.get_session_cwd(session_id, project_dir)
+            else:
+                cwd = get_claude_session_cwd(session_id, project_dir)
+        except (ValueError, OSError, RuntimeError) as exc:
+            resume_error = str(exc)
+        self.post_message(
+            events.Callback(
+                partial(
+                    self._show_messages,
+                    session_id,
+                    messages,
+                    source,
+                    cwd,
+                    project_dir,
+                    resume_error,
+                )
+            )
+        )
 
     def action_export_session(self) -> None:
         """Write the previewed session's full conversation to a markdown file."""
@@ -778,17 +820,21 @@ class ProjectsPane(Container):
         self.app.exit()
 
     def _show_messages(self, session_id: str, messages: list[dict], source: str = "claude",
-                       cwd: str | None = None, project_dir: str | None = None) -> None:
+                       cwd: str | None = None, project_dir: str | None = None,
+                       resume_error: str | None = None) -> None:
         header = self.query_one("#project-detail-header", Static)
         body = self.query_one("#project-detail-body", Static)
         header.update(f"[bold]Session:[/] {session_id[:16]}...")
 
-        self._preview_target = (session_id, source, cwd)
+        self._preview_target = None if resume_error else (session_id, source, cwd)
         self._preview_export = (session_id, source, project_dir)
-        resume_line = (
-            f"[dim]↻ resume:[/] [cyan]asm resume {escape(session_id)}[/]"
-            f"  [dim]({t('proj.resume_key_hint')})[/]"
-        )
+        if resume_error:
+            resume_line = f"[red]{escape(resume_error)}[/]"
+        else:
+            resume_line = (
+                f"[dim]↻ resume:[/] [cyan]asm resume {escape(session_id)}[/]"
+                f"  [dim]({t('proj.resume_key_hint')})[/]"
+            )
 
         if not messages:
             body.update(f"{resume_line}\n\n{t('proj.no_messages')}")

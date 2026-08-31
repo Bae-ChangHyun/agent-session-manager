@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path, PurePath
 from unittest.mock import patch
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # decode_path_hint
@@ -178,15 +176,3 @@ class TestBackupSymlinks:
         with patch("asm.services.backup.sys") as mock_sys:
             mock_sys.platform = "darwin"
             assert (mock_sys.platform != "win32") is True
-
-
-# ---------------------------------------------------------------------------
-# migrate.py uses decode_path_hint
-# ---------------------------------------------------------------------------
-
-class TestMigrateDecoding:
-    def test_uses_decode_path_hint(self):
-        """Verify migrate.py imports decode_path_hint from models."""
-        from asm.services import migrate
-
-        assert hasattr(migrate, "decode_path_hint")

@@ -67,6 +67,102 @@ def test_cli_preview_missing(monkeypatch, capsys, tmp_path: Path):
     assert code == 1
 
 
+def test_cli_preview_requires_source_when_id_exists_in_both_agents(
+    monkeypatch, capsys, tmp_path: Path
+):
+    from asm.services import codex_data
+    from tests.test_codex_data import _write_rollout
+
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    codex_root = tmp_path / "codex-sessions"
+    sid = str(env["session_id"])
+    _write_rollout(
+        codex_root / "2026" / "06" / "01" / f"rollout-{sid}.jsonl",
+        sid,
+        "/work/codex",
+        "gpt-5",
+        {},
+        "codex collision",
+    )
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", codex_root)
+    codex_data.refresh()
+
+    code, _ = _run(monkeypatch, capsys, "preview", sid)
+    assert code == 1
+
+    code, out = _run(monkeypatch, capsys, "preview", sid, "--source", "codex")
+    assert code == 0
+    assert "codex collision" in out
+
+
+def test_cli_preview_project_disambiguates_duplicate_claude_id(
+    monkeypatch, capsys, tmp_path: Path
+):
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    duplicate = Path(env["projects_dir"]) / str(env["encoded_b"]) / f"{env['session_id']}.jsonl"
+    duplicate.write_text(
+        json.dumps({"type": "user", "message": {"content": "scoped copy"}}) + "\n"
+    )
+
+    code, out = _run(
+        monkeypatch,
+        capsys,
+        "preview",
+        str(env["session_id"]),
+        "--project",
+        str(env["project_b"]),
+    )
+
+    assert code == 0
+    assert "scoped copy" in out
+
+
+def test_cli_trash_rejects_ambiguous_claude_prefix(monkeypatch, capsys, tmp_path: Path):
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    projects_dir = Path(env["projects_dir"])
+    first = projects_dir / str(env["encoded_a"]) / "abc111.jsonl"
+    second = projects_dir / str(env["encoded_b"]) / "abc222.jsonl"
+    first.write_text("{}\n")
+    second.write_text("{}\n")
+
+    code, _ = _run(monkeypatch, capsys, "trash", "abc", "--yes")
+
+    assert code == 1
+    assert first.exists()
+    assert second.exists()
+
+
+def test_cli_trash_rejects_cross_agent_id_collision(monkeypatch, capsys, tmp_path: Path):
+    from asm.services import codex_data
+    from tests.test_codex_data import _write_rollout
+
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    sid = str(env["session_id"])
+    claude_session = Path(env["projects_dir"]) / str(env["encoded_a"]) / f"{sid}.jsonl"
+    codex_root = tmp_path / "codex-sessions"
+    rollout = codex_root / "2026" / "06" / "01" / f"rollout-{sid}.jsonl"
+    _write_rollout(rollout, sid, "/work/codex", "gpt-5", {}, "collision")
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", codex_root)
+    codex_data.refresh()
+
+    code, _ = _run(monkeypatch, capsys, "trash", sid, "--yes")
+
+    assert code == 1
+    assert claude_session.exists()
+    assert rollout.exists()
+
+
+def test_cli_clean_orphaned_stops_on_malformed_project_config(monkeypatch, capsys, tmp_path: Path):
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    Path(env["claude_json"]).write_text("{broken")
+    session_dirs = sorted(p for p in Path(env["projects_dir"]).iterdir() if p.is_dir())
+
+    code, _ = _run(monkeypatch, capsys, "clean", "orphaned", "--yes")
+
+    assert code == 1
+    assert all(path.exists() for path in session_dirs)
+
+
 def test_cli_clean_empty_dry_run(monkeypatch, capsys, tmp_path: Path):
     env = _setup_fake_claude(monkeypatch, tmp_path)
     # project_b's session is a single user message -> counted as empty stub.
@@ -96,6 +192,37 @@ def test_cli_backup_create_and_list(monkeypatch, capsys, tmp_path: Path):
     assert created in out
 
 
+def test_cli_plugin_restore_json_includes_warnings(monkeypatch, capsys, tmp_path: Path):
+    from asm.services import backup
+
+    _setup_fake_claude(monkeypatch, tmp_path)
+    created = backup.create_plugins_backup()
+    warning = backup.PluginRestoreWarning("broken_symlink", "/plugins/link", "broken link")
+    monkeypatch.setattr(
+        backup,
+        "restore_plugins_backup",
+        lambda _path: backup.PluginRestoreResult(True, [warning]),
+    )
+
+    code, out = _run(
+        monkeypatch,
+        capsys,
+        "backup",
+        "restore",
+        str(created),
+        "--yes",
+        "--json",
+    )
+
+    assert code == 0
+    assert json.loads(out) == {
+        "success": True,
+        "warnings": [
+            {"code": "broken_symlink", "path": "/plugins/link", "message": "broken link"}
+        ],
+    }
+
+
 def test_cli_migrate(monkeypatch, capsys, tmp_path: Path):
     env = _setup_fake_claude(monkeypatch, tmp_path)
     target = str(Path(env["home"]) / "work" / "project-gamma")
@@ -106,6 +233,23 @@ def test_cli_migrate(monkeypatch, capsys, tmp_path: Path):
     )
     assert code == 0
     assert "1 session(s) copied" in out
+
+
+def test_cli_migrate_rejects_empty_sessions_option(monkeypatch, capsys, tmp_path: Path):
+    env = _setup_fake_claude(monkeypatch, tmp_path)
+    target = str(Path(env["home"]) / "work" / "project-gamma")
+
+    code, _ = _run(
+        monkeypatch,
+        capsys,
+        "migrate",
+        str(env["project_a"]),
+        target,
+        "--sessions",
+        "--yes",
+    )
+
+    assert code == 2
 
 
 def test_cli_destructive_requires_confirmation(monkeypatch, capsys, tmp_path: Path):
@@ -149,6 +293,28 @@ def test_cli_resume_claude_dry_run(monkeypatch, capsys, tmp_path: Path):
     assert code == 0
     assert chdirs == [str(work)]  # cd into the recorded cwd
     assert f"claude -r {sid}" in err
+
+
+def test_cli_resume_stops_when_claude_session_has_no_recorded_cwd(
+    monkeypatch, capsys, tmp_path: Path
+):
+    import asm.models as models
+
+    projects = tmp_path / "projects"
+    project_dir = projects / "encoded-project"
+    project_dir.mkdir(parents=True)
+    sid = "aaaaaaaa-1111-2222-3333-444444444444"
+    (project_dir / f"{sid}.jsonl").write_text(
+        json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n"
+    )
+    monkeypatch.setattr(models, "PROJECTS_DIR", projects)
+    calls = []
+    monkeypatch.setattr("asm.cli._exec_resume", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+
+    code, _ = _run(monkeypatch, capsys, "resume", sid, "--dry-run", "--source", "claude")
+
+    assert code == 1
+    assert calls == []
 
 
 def test_cli_resume_codex_dry_run(monkeypatch, capsys, tmp_path: Path):

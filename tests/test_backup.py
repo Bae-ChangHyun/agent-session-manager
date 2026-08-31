@@ -264,18 +264,20 @@ class TestExportImport:
         assert result is None
 
     @pytest.mark.skipif(os.name == "nt", reason="Symlink archive members differ on Windows")
-    def test_import_rejects_symlink_member(self, tmp_path: Path):
+    def test_import_rejects_external_symlink(self, tmp_path: Path):
         archive = tmp_path / "symlink.tar.gz"
+        target = tmp_path / "outside-target"
         with tarfile.open(str(archive), "w:gz") as tar:
             info = tarfile.TarInfo(name="settings-test/link")
             info.type = tarfile.SYMTYPE
-            info.linkname = "/tmp/evil-target"
+            info.linkname = str(target)
             tar.addfile(info)
 
         with patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"):
             result = import_backup(str(archive))
 
         assert result is None
+        assert not target.exists()
 
     def test_import_rejects_non_targz(self, tmp_path: Path):
         result = import_backup(str(tmp_path / "not.zip"))
@@ -373,6 +375,8 @@ class TestRestoreFullBackup:
 
         replace_calls: list[tuple[Path, Path]] = []
         real_replace = os.replace
+        safety = tmp_path / "backups" / "full-safety"
+        safety.mkdir()
 
         def tracked_replace(src, dst):
             replace_calls.append((Path(src), Path(dst)))
@@ -382,7 +386,7 @@ class TestRestoreFullBackup:
             patch("asm.services.backup.BACKUP_BASE_DIR", tmp_path / "backups"),
             patch("asm.services.backup.CLAUDE_DIR", fake_claude_dir),
             patch("asm.services.backup.CLAUDE_JSON", fake_claude_json),
-            patch("asm.services.backup.create_full_backup", return_value=str(tmp_path / "safety")),
+            patch("asm.services.backup.create_full_backup", return_value=str(safety)),
             patch("asm.services.backup.os.replace", side_effect=tracked_replace),
         ):
             ok = restore_full_backup(str(backup_dir))

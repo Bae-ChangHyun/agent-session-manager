@@ -216,6 +216,7 @@ class BackupsPane(Container):
         table = self.query_one("#backups-table", DataTable)
         table.clear()
         self._backups = {b.name: b for b in backups}
+        self._selected.intersection_update(self._backups)
         self._row_display = {}
         for b in backups:
             created = (
@@ -225,7 +226,12 @@ class BackupsPane(Container):
             )
             display = b.name
             self._row_display[b.name] = display
-            table.add_row(display, created, format_bytes(b.size_bytes), b.path, key=b.name)
+            marked_display = (
+                f"[bold green]●[/] {display}" if b.name in self._selected else display
+            )
+            table.add_row(
+                marked_display, created, format_bytes(b.size_bytes), b.path, key=b.name
+            )
 
     def _filtered_backups(self):
         query = self._filter_query.casefold()
@@ -620,10 +626,17 @@ class BackupsPane(Container):
     # ── Delete backups ───────────────────────────────────────
 
     def _click_delete(self) -> None:
-        if self._selected:
+        selected_backups = [
+            self._backups[name]
+            for name in sorted(self._selected)
+            if name in self._backups
+        ]
+        if selected_backups:
             self.app.push_screen(
-                ConfirmScreen(t("bak.confirm_bulk_delete", count=len(self._selected))),
-                callback=lambda ok: self._do_bulk_delete() if ok else None,
+                ConfirmScreen(t("bak.confirm_bulk_delete", count=len(selected_backups))),
+                callback=lambda ok, backups=selected_backups: self._do_bulk_delete(backups)
+                if ok
+                else None,
             )
             return
         backup = self._get_selected_backup()
@@ -647,15 +660,12 @@ class BackupsPane(Container):
 
         self.run_worker(_work, thread=True)
 
-    def _do_bulk_delete(self) -> None:
-        names = list(self._selected)
-
+    def _do_bulk_delete(self, backups) -> None:
         def _work():
             ok_count = 0
             fail_count = 0
-            for name in names:
-                backup = self._backups.get(name)
-                if backup and delete_backup(backup.path):
+            for backup in backups:
+                if delete_backup(backup.path):
                     ok_count += 1
                 else:
                     fail_count += 1

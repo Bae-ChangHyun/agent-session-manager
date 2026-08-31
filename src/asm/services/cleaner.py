@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -11,13 +12,14 @@ from pathlib import Path
 from send2trash import send2trash
 
 from asm.models import CLAUDE_DIR, DEBUG_DIR, FILE_HISTORY_DIR, PROJECTS_DIR, SESSION_ENV_DIR, TASKS_DIR, TODOS_DIR
-from asm.services.recovery import create_recovery_snapshot
+from asm.services.recovery import create_recovery_snapshot, create_recovery_snapshots
 
 logger = logging.getLogger(__name__)
 
 # --- Path traversal prevention ---
 
 _ALLOWED_ROOTS = (CLAUDE_DIR,)
+_SAFE_COMPONENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z|-[A-Za-z0-9._-]*\Z")
 
 
 def _validate_path(path: Path) -> Path:
@@ -28,6 +30,28 @@ def _validate_path(path: Path) -> Path:
     if not any(resolved.is_relative_to(root.resolve()) for root in _ALLOWED_ROOTS):
         raise ValueError(f"Path outside allowed directories: {path}")
     return resolved
+
+
+def _validate_component(value: str, label: str) -> str:
+    if not isinstance(value, str) or not _SAFE_COMPONENT_RE.fullmatch(value):
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return value
+
+
+def _create_required_snapshot(path: Path, category: str) -> str:
+    snapshot_id = create_recovery_snapshot(path, category)
+    if not isinstance(snapshot_id, str) or not _SAFE_COMPONENT_RE.fullmatch(snapshot_id):
+        raise OSError(f"Recovery snapshot failed for {path}")
+    return snapshot_id
+
+
+def _create_required_snapshots(items: list[tuple[Path, str]]) -> list[str]:
+    snapshot_ids = create_recovery_snapshots(items)
+    if not isinstance(snapshot_ids, list) or len(snapshot_ids) != len(items):
+        raise OSError("Recovery snapshot batch failed")
+    if any(not isinstance(item, str) or not _SAFE_COMPONENT_RE.fullmatch(item) for item in snapshot_ids):
+        raise OSError("Recovery snapshot batch returned invalid ids")
+    return snapshot_ids
 
 
 # --- Trash logging (recovery mechanism) ---
@@ -54,16 +78,27 @@ def _log_trash(path: Path, category: str) -> None:
 
 def trash_session(dir_name: str) -> bool:
     """Move a session directory to trash, including related session-env dirs."""
-    target = PROJECTS_DIR / dir_name
-    if not target.exists():
-        return False
     try:
+        _validate_component(dir_name, "project directory")
+        target = PROJECTS_DIR / dir_name
+        if not target.exists():
+            return False
         resolved = _validate_path(target)
-        create_recovery_snapshot(resolved, "session")
-        _trash_related_session_envs(dir_name)
+        related = _related_session_envs(dir_name)
+        snapshot_items = [(resolved, "session")]
+        snapshot_items.extend((env_path, "session-env") for env_path in related)
+        _create_required_snapshots(snapshot_items)
         _log_trash(resolved, "session")
         send2trash(str(resolved))
-        return True
+        failed = False
+        for env_path in related:
+            try:
+                _log_trash(env_path, "session-env")
+                send2trash(str(env_path))
+            except (ValueError, PermissionError, OSError) as exc:
+                logger.warning("Failed to trash session-env %s: %s", env_path.name, exc)
+                failed = True
+        return not failed
     except (ValueError, PermissionError, OSError) as e:
         logger.warning("Failed to trash session %s: %s", dir_name, e)
         return False
@@ -80,32 +115,30 @@ def trash_sessions(dir_names: list[str]) -> tuple[int, int]:
     return ok, fail
 
 
-def _trash_related_session_envs(dir_name: str) -> None:
-    """Trash session-env directories related to a project dir."""
+def _related_session_envs(dir_name: str) -> list[Path]:
     if not SESSION_ENV_DIR.exists():
-        return
-    try:
-        for d in SESSION_ENV_DIR.iterdir():
-            if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
-                try:
-                    resolved_d = _validate_path(d)
-                    create_recovery_snapshot(resolved_d, "session-env")
-                    _log_trash(resolved_d, "session-env")
-                    send2trash(str(resolved_d))
-                except (ValueError, PermissionError, OSError) as e:
-                    logger.warning("Failed to trash session-env %s: %s", d.name, e)
-    except (PermissionError, OSError):
-        pass
+        return []
+    related = []
+    for d in SESSION_ENV_DIR.iterdir():
+        if d.is_dir() and (d.name == dir_name or d.name.startswith(dir_name + "-")):
+            related.append(_validate_path(d))
+    return related
 
 
 def trash_single_session_file(project_encoded: str, session_id: str) -> bool:
     """Move a single .jsonl session file to trash."""
-    target = PROJECTS_DIR / project_encoded / f"{session_id}.jsonl"
-    if not target.exists():
-        return False
     try:
+        _validate_component(project_encoded, "project directory")
+        _validate_component(session_id, "session id")
+        project_dir = PROJECTS_DIR / project_encoded
+        target = project_dir / f"{session_id}.jsonl"
+        if not target.exists():
+            return False
+        resolved_project = _validate_path(project_dir)
         resolved = _validate_path(target)
-        create_recovery_snapshot(resolved, "session")
+        if resolved.parent != resolved_project:
+            raise ValueError(f"Session file outside project directory: {target}")
+        _create_required_snapshot(resolved, "session")
         _log_trash(resolved, "session")
         send2trash(str(resolved))
         return True
@@ -121,7 +154,7 @@ def trash_file_history(dir_name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
-        create_recovery_snapshot(resolved, "file_history")
+        _create_required_snapshot(resolved, "file_history")
         _log_trash(resolved, "file_history")
         send2trash(str(resolved))
         return True
@@ -148,7 +181,7 @@ def trash_debug_file(name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
-        create_recovery_snapshot(resolved, "debug")
+        _create_required_snapshot(resolved, "debug")
         _log_trash(resolved, "debug")
         send2trash(str(resolved))
         return True
@@ -181,7 +214,7 @@ def trash_todo_file(name: str) -> bool:
         return False
     try:
         resolved = _validate_path(target)
-        create_recovery_snapshot(resolved, "todo")
+        _create_required_snapshot(resolved, "todo")
         _log_trash(resolved, "todo")
         send2trash(str(resolved))
         return True
@@ -236,7 +269,7 @@ def _prune_empty_task_dirs() -> tuple[int, int]:
             continue
         try:
             resolved = _validate_path(d)
-            create_recovery_snapshot(resolved, "todo")
+            _create_required_snapshot(resolved, "todo")
             _log_trash(resolved, "todo")
             send2trash(str(resolved))
             ok += 1
@@ -268,7 +301,7 @@ def _prune_empty_in_dir(directory: Path, category: str = "generic") -> tuple[int
             content = f.read_text(errors="replace").strip()
             if content in ("[]", "{}", ""):
                 resolved_f = _validate_path(f)
-                create_recovery_snapshot(resolved_f, category)
+                _create_required_snapshot(resolved_f, category)
                 _log_trash(resolved_f, category)
                 send2trash(str(resolved_f))
                 ok += 1
@@ -334,7 +367,7 @@ def trash_codex_session(path: str | Path) -> bool:
         roots = [d.resolve() for d in codex_data._session_dirs() if d.exists()]
         if not any(resolved.is_relative_to(root) for root in roots):
             raise ValueError(f"Path outside Codex dir: {p}")
-        create_recovery_snapshot(resolved, "codex-session")
+        _create_required_snapshot(resolved, "codex-session")
         _log_trash(resolved, "codex-session")
         send2trash(str(resolved))
         return True

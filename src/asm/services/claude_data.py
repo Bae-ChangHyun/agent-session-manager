@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -44,6 +45,23 @@ from asm.models import (
 )
 
 
+class ClaudeConfigError(RuntimeError):
+    pass
+
+
+class AmbiguousSessionIdError(ValueError):
+    pass
+
+
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def _validate_session_ref(session_ref: str) -> str:
+    if not isinstance(session_ref, str) or not _SESSION_ID_RE.fullmatch(session_ref):
+        raise ValueError(f"Invalid Claude session id: {session_ref!r}")
+    return session_ref
+
+
 def _file_count(path: Path) -> int:
     """Count files and directories in a path."""
     try:
@@ -71,9 +89,18 @@ def load_claude_json() -> dict:
     if not CLAUDE_JSON.exists():
         return {}
     try:
-        return json.loads(CLAUDE_JSON.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
+        data = json.loads(CLAUDE_JSON.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ClaudeConfigError(f"Unable to read Claude project config: {CLAUDE_JSON}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ClaudeConfigError(f"Unable to read Claude project config: {CLAUDE_JSON}: root must be an object")
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict) or any(
+        not isinstance(path, str) or not isinstance(config, dict)
+        for path, config in projects.items()
+    ):
+        raise ClaudeConfigError(f"Unable to read Claude project config: {CLAUDE_JSON}: invalid projects registry")
+    return data
 
 
 def get_projects() -> list[ProjectInfo]:
@@ -109,7 +136,40 @@ def _build_encoded_to_paths_map() -> dict[str, list[str]]:
     return dict(encoded_to_paths)
 
 
-def _resolve_project_dir(project_ref: str | None) -> Path | None:
+def _trusted_encoded_to_paths_map() -> dict[str, list[str]]:
+    if not CLAUDE_JSON.exists():
+        raise ClaudeConfigError(f"Claude project config is missing: {CLAUDE_JSON}")
+    return _build_encoded_to_paths_map()
+
+
+def _recorded_project_cwds(project_dir: Path) -> set[str]:
+    cwds = set()
+    try:
+        for jsonl in project_dir.glob("*.jsonl"):
+            if jsonl.is_symlink():
+                raise OSError(f"Claude session file is a symlink: {jsonl}")
+            file_cwds = set()
+            with open(jsonl) as f:
+                for line_number, line in enumerate(f, start=1):
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            f"Malformed Claude session {jsonl} at line {line_number}: {exc}"
+                        ) from exc
+                    if isinstance(obj, dict) and isinstance(obj.get("cwd"), str) and obj["cwd"]:
+                        file_cwds.add(obj["cwd"])
+            if not file_cwds:
+                raise ValueError(f"Claude session has no recorded cwd: {jsonl}")
+            cwds.update(file_cwds)
+    except OSError as exc:
+        raise OSError(f"Unable to verify Claude project directory {project_dir}: {exc}") from exc
+    return cwds
+
+
+def _resolve_project_dir(
+    project_ref: str | None, projects_dir: Path | None = None
+) -> Path | None:
     """Resolve a project path or already-encoded directory name to a projects dir.
 
     ``project_ref`` may be either an absolute project path (from .claude.json) or
@@ -121,16 +181,43 @@ def _resolve_project_dir(project_ref: str | None) -> Path | None:
     """
     if not project_ref:
         return None
-    # Already-encoded directory name (relative, no leading slash).
-    if not project_ref.startswith("/"):
-        direct = PROJECTS_DIR / project_ref
-        if direct.exists() and direct.parent == PROJECTS_DIR:
-            return direct
-    encoded = encode_path(project_ref)
-    candidate = PROJECTS_DIR / encoded
-    if candidate.exists():
-        return candidate
-    return None
+    if not isinstance(project_ref, str):
+        raise ValueError(f"Invalid Claude project reference: {project_ref!r}")
+    root = projects_dir or PROJECTS_DIR
+    is_absolute = Path(project_ref).is_absolute()
+    if is_absolute:
+        encoded = encode_path(project_ref)
+    else:
+        if (
+            project_ref in (".", "..")
+            or "/" in project_ref
+            or "\\" in project_ref
+            or Path(project_ref).name != project_ref
+        ):
+            raise ValueError(f"Invalid Claude project reference: {project_ref!r}")
+        encoded = project_ref
+    candidate = root / encoded
+    try:
+        if candidate.is_symlink() or candidate.resolve().parent != root.resolve():
+            raise ValueError(f"Invalid Claude project reference: {project_ref!r}")
+        if not candidate.is_dir():
+            return None
+    except OSError as exc:
+        raise OSError(f"Unable to resolve Claude project reference {project_ref!r}: {exc}") from exc
+    if is_absolute:
+        try:
+            CLAUDE_JSON.stat()
+        except FileNotFoundError:
+            registered = []
+        except OSError as exc:
+            raise ClaudeConfigError(f"Unable to read Claude project config: {CLAUDE_JSON}: {exc}") from exc
+        else:
+            registered = _build_encoded_to_paths_map().get(encoded, [])
+        if registered and registered != [project_ref]:
+            raise ValueError(f"Untrusted or ambiguous Claude project path: {project_ref}")
+        if not registered and _recorded_project_cwds(candidate) != {project_ref}:
+            raise ValueError(f"Untrusted or ambiguous Claude project path: {project_ref}")
+    return candidate
 
 
 def _project_label_for_dir(dir_name: str, encoded_to_paths: dict[str, list[str]]) -> str:
@@ -143,18 +230,16 @@ def _project_label_for_dir(dir_name: str, encoded_to_paths: dict[str, list[str]]
     return decode_path_hint(dir_name)
 
 
-def get_sessions() -> list[SessionInfo]:
-    """Get all session data directories."""
+def _scan_session_dirs(encoded_to_paths: dict[str, list[str]] | None) -> list[SessionInfo]:
     if not PROJECTS_DIR.exists():
         return []
     result = []
-    encoded_to_paths = _build_encoded_to_paths_map()
     try:
         for d in sorted(PROJECTS_DIR.iterdir()):
             if not d.is_dir():
                 continue
             actual_path = d.name
-            is_orphaned = actual_path not in encoded_to_paths
+            is_orphaned = encoded_to_paths is not None and actual_path not in encoded_to_paths
 
             result.append(
                 SessionInfo(
@@ -169,6 +254,67 @@ def get_sessions() -> list[SessionInfo]:
     except (PermissionError, OSError):
         pass
     return result
+
+
+def get_sessions() -> list[SessionInfo]:
+    """Get all session data directories."""
+    try:
+        encoded_to_paths = _trusted_encoded_to_paths_map()
+    except ClaudeConfigError as exc:
+        logger.error("Cannot classify orphaned Claude sessions: %s", exc)
+        encoded_to_paths = None
+    return _scan_session_dirs(encoded_to_paths)
+
+
+def get_orphaned_sessions() -> list[SessionInfo]:
+    """Get orphaned session dirs only when the project registry is trustworthy."""
+    encoded_to_paths = _trusted_encoded_to_paths_map()
+    return [session for session in _scan_session_dirs(encoded_to_paths) if session.is_orphaned]
+
+
+def resolve_session_ref(
+    session_ref: str,
+    projects_dir: Path | None = None,
+    project_ref: str | None = None,
+) -> tuple[str, str] | None:
+    """Resolve an exact session id or a unique prefix to its project dir and full id."""
+    query = _validate_session_ref(session_ref)
+    root = projects_dir or PROJECTS_DIR
+    try:
+        root.stat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise OSError(f"Unable to scan Claude sessions: {exc}") from exc
+    if not root.is_dir():
+        raise OSError(f"Unable to scan Claude sessions: not a directory: {root}")
+    matches: list[tuple[str, str]] = []
+    try:
+        if project_ref:
+            scoped = _resolve_project_dir(project_ref, root)
+            project_dirs = [scoped] if scoped else []
+        else:
+            project_dirs = list(root.iterdir())
+        resolved_root = root.resolve()
+        for project_dir in project_dirs:
+            if project_dir.is_symlink():
+                raise OSError(f"Claude project directory is a symlink: {project_dir}")
+            if not project_dir.is_dir():
+                continue
+            if project_dir.resolve().parent != resolved_root:
+                raise OSError(f"Claude project directory escapes the projects root: {project_dir}")
+            for jsonl in list(project_dir.glob("*.jsonl")):
+                if jsonl.is_symlink():
+                    raise OSError(f"Claude session file is a symlink: {jsonl}")
+                if jsonl.stem.startswith(query):
+                    matches.append((project_dir.name, jsonl.stem))
+    except (PermissionError, OSError) as exc:
+        raise OSError(f"Unable to scan Claude sessions: {exc}") from exc
+    exact = [match for match in matches if match[1] == query]
+    candidates = exact or matches
+    if len(candidates) > 1:
+        raise AmbiguousSessionIdError(f"Session id matches multiple Claude sessions: {session_ref}")
+    return candidates[0] if candidates else None
 
 
 def _find_session_envs_for_dir(dir_name: str) -> list[str]:
@@ -272,6 +418,7 @@ def _get_sessions_via_jsonl(project_dir: str | None) -> list[SessionDetail]:
 
 def get_session_messages(session_id: str, project_dir: str | None = None, limit: int = 50) -> list[dict]:
     """Get messages from a session. Uses SDK if available, fallback to JSONL."""
+    _validate_session_ref(session_id)
     if project_dir and _resolve_project_dir(project_dir):
         return _get_messages_via_jsonl(session_id, project_dir, limit)
     try:
@@ -279,6 +426,36 @@ def get_session_messages(session_id: str, project_dir: str | None = None, limit:
     except _SDK_FALLBACK_EXCEPTIONS:
         logger.debug("SDK path failed for get_session_messages, falling back to JSONL", exc_info=True)
         return _get_messages_via_jsonl(session_id, project_dir, limit)
+
+
+def get_session_cwd(
+    session_id: str,
+    project_dir: str,
+    projects_dir: Path | None = None,
+) -> str:
+    _validate_session_ref(session_id)
+    project_root = _resolve_project_dir(project_dir, projects_dir)
+    if project_root is None:
+        raise FileNotFoundError(f"Claude project directory not found: {project_dir}")
+    jsonl_path = project_root / f"{session_id}.jsonl"
+    if jsonl_path.is_symlink():
+        raise OSError(f"Claude session file is a symlink: {jsonl_path}")
+    try:
+        with open(jsonl_path) as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict) or "cwd" not in obj:
+                    continue
+                cwd = obj["cwd"]
+                if not isinstance(cwd, str) or not cwd:
+                    raise ValueError(f"Claude session has an invalid recorded cwd: {session_id}")
+                return cwd
+    except OSError as exc:
+        raise OSError(f"Unable to read Claude session cwd: {jsonl_path}: {exc}") from exc
+    raise ValueError(f"Claude session has no recorded cwd: {session_id}")
 
 
 def _get_messages_via_sdk(session_id: str, project_dir: str | None, limit: int) -> list[dict]:
@@ -302,7 +479,9 @@ def _get_messages_via_jsonl(session_id: str, project_dir: str | None, limit: int
     if project_dir:
         project_root = _resolve_project_dir(project_dir)
         candidate = project_root / f"{session_id}.jsonl" if project_root else None
-        if candidate and candidate.exists():
+        if candidate and candidate.is_symlink():
+            raise OSError(f"Claude session file is a symlink: {candidate}")
+        if candidate and candidate.is_file():
             jsonl_path = candidate
     else:
         if PROJECTS_DIR.exists():

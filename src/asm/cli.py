@@ -47,15 +47,43 @@ def _role(m: dict) -> str:
     return m.get("type") or m.get("role") or "?"
 
 
-def _find_claude_project_dir(session_id: str) -> str | None:
-    """Encoded project dir name owning this session's JSONL, if any."""
-    from asm.models import PROJECTS_DIR
+def _resolve_claude_session(
+    session_id: str,
+    projects_dir: Path | None = None,
+    project: str | None = None,
+) -> tuple[str, str] | None:
+    from asm import models
+    from asm.services.claude_data import resolve_session_ref
 
-    if PROJECTS_DIR.exists():
-        for d in PROJECTS_DIR.iterdir():
-            if d.is_dir() and (d / f"{session_id}.jsonl").exists():
-                return d.name
-    return None
+    return resolve_session_ref(
+        session_id,
+        projects_dir or models.PROJECTS_DIR,
+        project_ref=project,
+    )
+
+
+def _resolve_session_target(
+    session_id: str,
+    source: str | None = None,
+    project: str | None = None,
+    projects_dir: Path | None = None,
+):
+    from asm.services import codex_data
+
+    candidates = []
+    if source in (None, "all", "claude"):
+        resolved = _resolve_claude_session(session_id, projects_dir, project)
+        if resolved:
+            candidates.append(("claude", resolved))
+    if source in (None, "all", "codex"):
+        resolved = codex_data.find_session(session_id, cwd=project)
+        if resolved:
+            candidates.append(("codex", resolved))
+    if len(candidates) > 1:
+        raise ValueError(
+            f"Session id exists in both Claude and Codex: {session_id}; specify --source"
+        )
+    return candidates[0] if candidates else None
 
 
 def _print_table(title: str | None, columns: list[str], rows: list[tuple], justify: tuple = ()) -> None:
@@ -297,13 +325,27 @@ def cmd_sessions(args) -> int:
 def cmd_preview(args) -> int:
     from asm.services import claude_data, codex_data
 
-    # Resolve the owning project dir up front so the direct JSONL path is used
-    # (the SDK lookup returns [] for ids it can't find instead of raising).
-    project = args.project or _find_claude_project_dir(args.session_id)
-
-    messages = claude_data.get_session_messages(args.session_id, project, args.limit)
-    if not messages and codex_data.is_available():
-        messages = codex_data.get_session_messages(args.session_id, limit=args.limit)
+    try:
+        target = _resolve_session_target(
+            args.session_id,
+            source=args.source,
+            project=args.project,
+        )
+        if target and target[0] == "claude":
+            encoded, session_id = target[1]
+            messages = claude_data.get_session_messages(session_id, encoded, args.limit)
+        elif target:
+            session = target[1]
+            messages = codex_data.get_session_messages(
+                session.session_id,
+                session.project_dir,
+                args.limit,
+            )
+        else:
+            messages = []
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not messages:
         print(f"session not found: {args.session_id}", file=sys.stderr)
         return 1
@@ -360,36 +402,22 @@ def cmd_artifacts(args) -> int:
 # ── resume ──────────────────────────────────────────────────────────────
 
 
-def _read_claude_session_cwd(jsonl: Path) -> str | None:
-    """The working dir recorded inside a Claude session JSONL, if any."""
-    try:
-        with open(jsonl) as f:
-            for line in f:
-                try:
-                    o = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(o, dict) and o.get("cwd"):
-                    return o["cwd"]
-    except OSError:
-        pass
-    return None
-
-
 def _exec_resume(argv: list[str], cwd: str | None, dry_run: bool) -> int:
     """chdir into ``cwd`` and replace this process with ``argv`` (resume)."""
     import os
     import shutil
 
+    if not cwd:
+        print("session has no recorded cwd", file=sys.stderr)
+        return 1
     if shutil.which(argv[0]) is None:
         print(f"{argv[0]} not found in PATH", file=sys.stderr)
         return 1
-    if cwd:
-        if not os.path.isdir(cwd):
-            print(f"project dir not found: {cwd}", file=sys.stderr)
-            return 1
-        os.chdir(cwd)
-    print(f"↻ (cwd: {cwd or os.getcwd()})  {' '.join(argv)}", file=sys.stderr)
+    if not os.path.isdir(cwd):
+        print(f"project dir not found: {cwd}", file=sys.stderr)
+        return 1
+    os.chdir(cwd)
+    print(f"↻ (cwd: {cwd})  {' '.join(argv)}", file=sys.stderr)
     if dry_run:
         return 0
     os.execvp(argv[0], argv)  # replaces this process; never returns on success
@@ -402,20 +430,34 @@ def cmd_resume(args) -> int:
     `claude -r <id>` only finds a session in its own project dir, so we resolve
     the recorded cwd first. Codex resumes by id (cwd restored from its meta).
     """
-    from asm.models import PROJECTS_DIR, decode_path_hint
-
     sid = args.session_id
 
-    enc = _find_claude_project_dir(sid)
-    if enc:
-        cwd = _read_claude_session_cwd(PROJECTS_DIR / enc / f"{sid}.jsonl") or decode_path_hint(enc)
-        return _exec_resume(["claude", "-r", sid], cwd, args.dry_run)
+    try:
+        target = _resolve_session_target(
+            sid,
+            source=args.source,
+            project=args.project,
+        )
+        if target and target[0] == "claude":
+            from asm import models
+            from asm.services import claude_data
 
-    from asm.services import codex_data
-    if codex_data.is_available():
-        s = codex_data.find_session(sid)
-        if s:
-            return _exec_resume(["codex", "resume", sid], s.cwd or None, args.dry_run)
+            enc, full_id = target[1]
+            cwd = claude_data.get_session_cwd(full_id, enc, models.PROJECTS_DIR)
+            return _exec_resume(["claude", "-r", full_id], cwd, args.dry_run)
+        if target:
+            from asm.services import codex_data
+
+            session = target[1]
+            cwd = codex_data.get_session_cwd(session.session_id, session.project_dir)
+            return _exec_resume(
+                ["codex", "resume", session.session_id],
+                cwd,
+                args.dry_run,
+            )
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     print(f"session not found: {sid}", file=sys.stderr)
     return 1
@@ -444,7 +486,11 @@ def cmd_clean(args) -> int:
         return 0 if fail == 0 else 1
 
     if args.target == "orphaned":
-        names = [s.dir_name for s in claude_data.get_sessions() if s.is_orphaned]
+        try:
+            names = [s.dir_name for s in claude_data.get_orphaned_sessions()]
+        except claude_data.ClaudeConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         if args.dry_run or not names:
             _print_clean_plan(names, "orphaned session dir(s)", args)
             return 0
@@ -595,7 +641,19 @@ def cmd_backup(args) -> int:
             return 1
         result = getattr(backup, _BACKUP_RESTORERS[info.backup_type])(info.path)
         ok = result[0] if isinstance(result, tuple) else result
-        print("restored" if ok else "restore failed")
+        warnings = result.warnings if hasattr(result, "warnings") else []
+        if args.json:
+            _out_json({
+                "success": bool(ok),
+                "warnings": [
+                    {"code": warning.code, "path": warning.path, "message": warning.message}
+                    for warning in warnings
+                ],
+            })
+        else:
+            print("restored" if ok else "restore failed")
+            for warning in warnings:
+                print(warning.message, file=sys.stderr)
         return 0 if ok else 1
 
     if args.action == "delete":
@@ -674,26 +732,31 @@ def cmd_recovery(args) -> int:
 
 
 def cmd_trash(args) -> int:
-    from asm.services import cleaner, codex_data
+    from asm.services import cleaner
 
-    encoded_dir = _find_claude_project_dir(args.session_id)
-    if encoded_dir:
-        if not _confirm(f"Trash Claude session {args.session_id} ({encoded_dir})?", args.yes):
-            return 1
-        ok = cleaner.trash_single_session_file(encoded_dir, args.session_id)
-        print("trashed" if ok else "trash failed")
-        return 0 if ok else 1
-
-    if codex_data.is_available():
-        # Full-filename lookup, not the recent-N scan window — old sessions
-        # must stay trashable by id.
-        s = codex_data.find_session(args.session_id)
-        if s:
-            if not _confirm(f"Trash Codex session {args.session_id}?", args.yes):
+    try:
+        target = _resolve_session_target(
+            args.session_id,
+            source=args.source,
+            project=args.project,
+        )
+        if target and target[0] == "claude":
+            encoded_dir, full_id = target[1]
+            if not _confirm(f"Trash Claude session {full_id} ({encoded_dir})?", args.yes):
                 return 1
-            ok = cleaner.trash_codex_session(s.project_dir)  # rollout path
+            ok = cleaner.trash_single_session_file(encoded_dir, full_id)
+            print("trashed" if ok else "trash failed or incomplete")
+            return 0 if ok else 1
+        if target:
+            session = target[1]
+            if not _confirm(f"Trash Codex session {session.session_id}?", args.yes):
+                return 1
+            ok = cleaner.trash_codex_session(session.project_dir)
             print("trashed" if ok else "trash failed")
             return 0 if ok else 1
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     print(f"session not found: {args.session_id}", file=sys.stderr)
     return 1
@@ -714,7 +777,7 @@ def cmd_migrate(args) -> int:
         target_path=args.dest,
         source_encoded=encode_path(args.src),
         target_encoded=encode_path(args.dest),
-        session_ids=args.sessions or None,
+        session_ids=args.sessions,
     )
     print(f"{'ok' if result.success else 'failed'}: {result.sessions_copied} session(s) copied"
           + (f" — {result.message}" if result.message else ""))
@@ -729,23 +792,27 @@ def _import_direction(to: str) -> str:
     return "claude-to-codex" if to == "codex" else "codex-to-claude"
 
 
-def _resolve_import_source(session_id: str):
+def _resolve_import_source(
+    session_id: str,
+    source: str | None = None,
+    project: str | None = None,
+):
     """Locate a session by id and report which way it can travel."""
     from pathlib import Path as _Path
 
-    from asm.models import PROJECTS_DIR
-    from asm.services import agent_import, codex_data
+    from asm.services import agent_import
 
-    encoded = _find_claude_project_dir(session_id)
-    if encoded:
-        return "claude", _Path(PROJECTS_DIR) / encoded / f"{session_id}.jsonl"
-    rollout = agent_import.find_codex_rollout(session_id)
-    if rollout:
-        return "codex", rollout
-    if codex_data.is_available():
-        found = codex_data.find_session(session_id)
-        if found:
-            return "codex", _Path(found.project_dir)
+    target = _resolve_session_target(
+        session_id,
+        source=source,
+        project=project,
+        projects_dir=agent_import.PROJECTS_DIR,
+    )
+    if target and target[0] == "claude":
+        encoded, full_id = target[1]
+        return "claude", _Path(agent_import.PROJECTS_DIR) / encoded / f"{full_id}.jsonl"
+    if target:
+        return "codex", _Path(target[1].project_dir)
     return None, None
 
 
@@ -813,7 +880,15 @@ def cmd_import(args) -> int:
                   f"{row['turns']:>5} turns  {row['title'][:52]}")
         return 0
 
-    source, path = _resolve_import_source(args.session_id)
+    try:
+        source, path = _resolve_import_source(
+            args.session_id,
+            source=args.source,
+            project=args.project,
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not source:
         print(f"session not found: {args.session_id}", file=sys.stderr)
         return 1
@@ -892,7 +967,8 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
 
     p = sub.add_parser("preview", help="print a session's conversation")
     p.add_argument("session_id")
-    p.add_argument("--project", help="project path hint (faster lookup)")
+    p.add_argument("--project", help="limit lookup to one project path")
+    p.add_argument("--source", choices=["claude", "codex"], default=None)
     p.add_argument("--limit", type=int, default=50)
     _common(p)
     p.set_defaults(func=cmd_preview)
@@ -904,6 +980,8 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
 
     p = sub.add_parser("resume", help="cd into a session's project and resume it (Claude/Codex)")
     p.add_argument("session_id")
+    p.add_argument("--project", help="limit lookup to one project path")
+    p.add_argument("--source", choices=["claude", "codex"], default=None)
     p.add_argument("--dry-run", action="store_true", help="print the command + cwd instead of running it")
     p.set_defaults(func=cmd_resume)
 
@@ -933,6 +1011,8 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
 
     p = sub.add_parser("trash", help="trash one session by id (Claude or Codex)")
     p.add_argument("session_id")
+    p.add_argument("--project", help="limit lookup to one project path")
+    p.add_argument("--source", choices=["claude", "codex"], default=None)
     p.add_argument("--yes", action="store_true", help="skip confirmation")
     p.set_defaults(func=cmd_trash)
 
@@ -974,6 +1054,9 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
                    help="session: move one session by id; mcp: move MCP servers; "
                         "list: importable sessions; homes: Codex homes being scanned")
     p.add_argument("session_id", nargs="?", help="session id (action=session)")
+    p.add_argument("--project", help="limit session lookup to one project path")
+    p.add_argument("--source", choices=["claude", "codex"], default=None,
+                   help="source agent for action=session")
     p.add_argument("--to", choices=["codex", "claude"], default="claude",
                    help="destination agent for mcp/list (default: claude); session infers it from the id")
     p.add_argument("--limit", type=int, default=50, help="max rows for list (default 50, 0 = all)")
@@ -985,7 +1068,7 @@ def add_cli_subparsers(parser: argparse.ArgumentParser) -> None:
     p = sub.add_parser("migrate", help="copy sessions to another project path")
     p.add_argument("src", help="source project path")
     p.add_argument("dest", help="target project path")
-    p.add_argument("--sessions", nargs="*", help="session ids (default: all)")
+    p.add_argument("--sessions", nargs="+", help="session ids (default: all)")
     p.add_argument("--yes", action="store_true", help="skip confirmation")
     p.set_defaults(func=cmd_migrate)
 

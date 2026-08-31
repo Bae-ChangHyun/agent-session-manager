@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from rich.markup import escape
@@ -53,6 +57,8 @@ class AgentImportPane(Container):
         self._selected: set[str] = set()
         self._error: str | None = None
         self._truncated = 0
+        self._load_generation = 0
+        self._executor = ThreadPoolExecutor(max_workers=1)
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -75,10 +81,23 @@ class AgentImportPane(Container):
         return DIRECTIONS[self._index][1]
 
     def refresh_data(self) -> None:
-        self.run_worker(self._load, thread=True)
-
-    def _load(self) -> None:
+        self._load_generation += 1
+        generation = self._load_generation
         kind, direction = DIRECTIONS[self._index]
+        self.run_worker(
+            self._load(generation, kind, direction),
+            group="agent-import-load",
+            exclusive=True,
+        )
+
+    async def _load(self, generation: int, kind: str, direction: str) -> None:
+        loop = asyncio.get_running_loop()
+        rows, error, truncated = await loop.run_in_executor(
+            self._executor, self._build_rows, kind, direction
+        )
+        self._on_loaded(generation, rows, error, truncated)
+
+    def _build_rows(self, kind: str, direction: str):
         error = None
         truncated = 0
         rows: list[tuple[str, str, bool, object]] = []
@@ -99,9 +118,11 @@ class AgentImportPane(Container):
                 rows += [(c.path, c.title, False, None) for c in plan.already_imported]
         except agent_import.AgentImportError as exc:
             error = str(exc)
-        self.app.call_from_thread(self._on_loaded, rows, error, truncated)
+        return rows, error, truncated
 
-    def _on_loaded(self, rows, error, truncated) -> None:
+    def _on_loaded(self, generation, rows, error, truncated) -> None:
+        if generation != self._load_generation:
+            return
         self._rows = rows
         self._error = error
         self._truncated = truncated
@@ -168,15 +189,21 @@ class AgentImportPane(Container):
 
         def on_confirm(confirmed: bool) -> None:
             if confirmed:
-                self.run_worker(lambda: self._apply(chosen), thread=True)
+                kind, direction = DIRECTIONS[self._index]
+                self.run_worker(
+                    self._apply_async(chosen, kind, direction)
+                )
 
         self.app.push_screen(
             ConfirmScreen(t("imp.confirm", count=len(chosen), mode=self._direction)),
             on_confirm,
         )
 
-    def _apply(self, chosen) -> None:
-        kind, direction = DIRECTIONS[self._index]
+    async def _apply_async(self, chosen, kind: str, direction: str) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, self._apply, chosen, kind, direction)
+
+    def _apply(self, chosen, kind: str, direction: str) -> None:
         try:
             if kind == "mcp":
                 plan = agent_import.McpPlan(
@@ -191,9 +218,14 @@ class AgentImportPane(Container):
                     else agent_import.apply_sessions_to_claude(plan)
                 )
         except agent_import.AgentImportError as exc:
-            self.app.call_from_thread(self.app.notify, t("imp.error", error=str(exc)))
+            self.post_message(
+                events.Callback(partial(self.app.notify, t("imp.error", error=str(exc))))
+            )
             return
-        self.app.call_from_thread(self._on_applied, result)
+        self.post_message(events.Callback(partial(self._on_applied, result)))
+
+    def on_unmount(self) -> None:
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
     def _on_applied(self, result) -> None:
         self.app.notify(

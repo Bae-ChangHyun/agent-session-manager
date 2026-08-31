@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from asm.services import claude_data, codex_data, ledger, pricing
 from tests.test_codex_data import _write_rollout_real_layout
 
@@ -88,3 +90,76 @@ def test_codex_ledger_full_history_and_missing_files(monkeypatch, tmp_path: Path
     # …but no longer listed as a browsable session.
     assert codex_data.get_project_sessions("/w/a") == []
     assert len(codex_data.get_project_sessions("/w/b")) == 1
+
+
+@pytest.mark.parametrize(
+    ("invalid", "error"),
+    [
+        ("[]\n", "line 1: JSON value must be an object"),
+        ("{broken\n", "line 1: invalid JSON"),
+    ],
+)
+def test_claude_invalid_jsonl_preserves_rows_and_retries_other_files(
+    monkeypatch, tmp_path: Path, caplog, invalid: str, error: str
+):
+    projects = tmp_path / "projects"
+    monkeypatch.setattr(claude_data, "PROJECTS_DIR", projects)
+    broken = projects / "-p" / "broken.jsonl"
+    healthy = projects / "-p" / "healthy.jsonl"
+    _write_claude_session(
+        broken, "m-original", "claude-fable-5", 1_000, "2026-07-01T10:00:00Z"
+    )
+    assert ledger.update_claude() == 1
+
+    broken.write_text(invalid)
+    _write_claude_session(
+        healthy, "m-healthy", "claude-fable-5", 2_000, "2026-07-02T10:00:00Z"
+    )
+    caplog.clear()
+
+    assert ledger.update_claude() == 1
+    assert set(ledger.claude_records()) == {"m-original", "m-healthy"}
+    assert error in caplog.text
+
+    caplog.clear()
+    assert ledger.update_claude() == 0
+    assert set(ledger.claude_records()) == {"m-original", "m-healthy"}
+    assert error in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("invalid", "error"),
+    [
+        ("[]\n", "line 1: JSON value must be an object"),
+        ("{broken\n", "line 1: invalid JSON"),
+    ],
+)
+def test_codex_invalid_jsonl_preserves_rows_and_retries_other_files(
+    monkeypatch, tmp_path: Path, caplog, invalid: str, error: str
+):
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(codex_data, "CODEX_SESSIONS_DIR", sessions)
+    codex_data.refresh()
+    broken = sessions / "2026" / "06" / "01" / "rollout-broken.jsonl"
+    healthy = sessions / "2026" / "06" / "02" / "rollout-healthy.jsonl"
+    usage = {
+        "input_tokens": 1_000,
+        "cached_input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 1_000,
+    }
+    _write_rollout_real_layout(broken, "original", "/w/original", ["gpt-5.5"], usage)
+    assert ledger.update_codex() == 1
+
+    broken.write_text(invalid)
+    _write_rollout_real_layout(healthy, "healthy", "/w/healthy", ["gpt-5.5"], usage)
+    caplog.clear()
+
+    assert ledger.update_codex() == 1
+    assert {record["id"] for record in ledger.codex_records()} == {"original", "healthy"}
+    assert error in caplog.text
+
+    caplog.clear()
+    assert ledger.update_codex() == 0
+    assert {record["id"] for record in ledger.codex_records()} == {"original", "healthy"}
+    assert error in caplog.text

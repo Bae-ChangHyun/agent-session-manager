@@ -43,6 +43,30 @@ CREATE TABLE IF NOT EXISTS codex_sessions(
 _PROGRESS_EVERY = 200
 
 
+class LedgerParseError(ValueError):
+    pass
+
+
+def _json_object(line: str, path: Path, line_number: int) -> dict:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise LedgerParseError(
+            f"{path}: line {line_number}: invalid JSON: {exc.msg}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise LedgerParseError(
+            f"{path}: line {line_number}: JSON value must be an object"
+        )
+    return value
+
+
+def _validate_jsonl_objects(path: Path) -> None:
+    with open(path) as file:
+        for line_number, line in enumerate(file, 1):
+            _json_object(line, path, line_number)
+
+
 def _db_path() -> Path:
     from asm import models
 
@@ -114,12 +138,18 @@ def update_claude(progress: ProgressCB | None = None) -> int:
                 if stamp is not None:
                     todo.append((jsonl, d.name, stamp))
         _load_rates_if_needed(len(todo))
+        updated = 0
         for i, (jsonl, project_dir, stamp) in enumerate(todo, 1):
-            _ingest_claude_file(conn, jsonl, project_dir, stamp)
+            try:
+                _ingest_claude_file(conn, jsonl, project_dir, stamp)
+            except (LedgerParseError, OSError) as exc:
+                logger.error("Cannot ingest Claude usage from %s: %s", jsonl, exc)
+            else:
+                updated += 1
             if progress and (i % _PROGRESS_EVERY == 0 or i == len(todo)):
                 progress("claude", i, len(todo))
         conn.commit()
-        return len(todo)
+        return updated
     finally:
         conn.close()
 
@@ -130,35 +160,36 @@ def _ingest_claude_file(
     from asm.services.pricing import calc_cost, is_billable
 
     rows = []
-    try:
-        with open(jsonl) as f:
-            for line in f:
-                try:
-                    msg = json.loads(line)
-                    if msg.get("type") != "assistant":
-                        continue
-                    m = msg.get("message", {})
-                    usage = m.get("usage")
-                    model = m.get("model", "")
-                    ts_str = msg.get("timestamp", "")
-                    msg_id = m.get("id", "")
-                    if not usage or not ts_str or not msg_id:
-                        continue
-                    if not is_billable(model):
-                        continue
-                    rows.append((
-                        msg_id, ts_str, model,
-                        usage.get("input_tokens", 0),
-                        usage.get("output_tokens", 0),
-                        usage.get("cache_read_input_tokens", 0),
-                        usage.get("cache_creation_input_tokens", 0),
-                        calc_cost(usage, model),
-                        project_dir, str(jsonl),
-                    ))
-                except (json.JSONDecodeError, KeyError):
+    with open(jsonl) as f:
+        for line_number, line in enumerate(f, 1):
+            try:
+                msg = _json_object(line, jsonl, line_number)
+                if msg.get("type") != "assistant":
                     continue
-    except OSError:
-        return
+                m = msg.get("message", {})
+                usage = m.get("usage")
+                model = m.get("model", "")
+                ts_str = msg.get("timestamp", "")
+                msg_id = m.get("id", "")
+                if not usage or not ts_str or not msg_id:
+                    continue
+                if not is_billable(model):
+                    continue
+                rows.append((
+                    msg_id, ts_str, model,
+                    usage.get("input_tokens", 0),
+                    usage.get("output_tokens", 0),
+                    usage.get("cache_read_input_tokens", 0),
+                    usage.get("cache_creation_input_tokens", 0),
+                    calc_cost(usage, model),
+                    project_dir, str(jsonl),
+                ))
+            except LedgerParseError:
+                raise
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise LedgerParseError(
+                    f"{jsonl}: line {line_number}: invalid Claude usage record: {exc}"
+                ) from exc
     # A rewrite (e.g. migrate) can drop lines — replace this file's rows wholesale.
     conn.execute("DELETE FROM claude_messages WHERE file = ?", (str(jsonl),))
     conn.executemany(
@@ -214,14 +245,20 @@ def update_codex(progress: ProgressCB | None = None) -> int:
             if stamp is not None:
                 todo.append((f, stamp))
         _load_rates_if_needed(len(todo))
+        updated = 0
         for i, (f, stamp) in enumerate(todo, 1):
-            _ingest_codex_file(conn, f, stamp)
+            try:
+                _ingest_codex_file(conn, f, stamp)
+            except (LedgerParseError, OSError) as exc:
+                logger.error("Cannot ingest Codex usage from %s: %s", f, exc)
+            else:
+                updated += 1
             if progress and (i % _PROGRESS_EVERY == 0 or i == len(todo)):
                 progress("codex", i, len(todo))
             if i % 1000 == 0:
                 conn.commit()  # keep the one-time backfill restartable
         conn.commit()
-        return len(todo)
+        return updated
     finally:
         conn.close()
 
@@ -229,8 +266,11 @@ def update_codex(progress: ProgressCB | None = None) -> int:
 def _ingest_codex_file(conn: sqlite3.Connection, f: Path, stamp: tuple[float, int]) -> None:
     from asm.services import codex_data, pricing
 
-    info = codex_data._scan_session(f)
-    if info is not None:
+    _validate_jsonl_objects(f)
+    try:
+        info = codex_data._scan_session(f)
+        if info is None:
+            raise LedgerParseError(f"{f}: missing or unreadable session_meta")
         usage = info["usage"]
         model = info["model"] or codex_data.UNKNOWN_MODEL
         cost = pricing.calc_openai_cost(usage, model) if usage else 0.0
@@ -244,6 +284,10 @@ def _ingest_codex_file(conn: sqlite3.Connection, f: Path, stamp: tuple[float, in
                 info["first_prompt"], info["git_branch"],
             ),
         )
+    except LedgerParseError:
+        raise
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise LedgerParseError(f"{f}: invalid Codex usage record: {exc}") from exc
     conn.execute(
         "INSERT OR REPLACE INTO scanned_files VALUES (?,?,?,?)",
         (str(f), stamp[0], stamp[1], "codex"),

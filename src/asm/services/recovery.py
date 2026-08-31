@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from send2trash import send2trash
 
@@ -21,6 +23,7 @@ _SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 # ~/.asm/recovery without bound (every trash duplicates data here + OS trash).
 _MAX_ITEMS = 100
 _MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+_MAX_ITEM_BYTES = _MAX_TOTAL_BYTES
 
 
 def _validate_original_path(path: Path) -> Path:
@@ -57,34 +60,65 @@ def _safe_name(name: str) -> str:
     return (_SAFE_NAME_RE.sub("-", name).strip("-") or "item")[:48]
 
 
-def create_recovery_snapshot(path: Path, category: str) -> str | None:
-    """Create a recovery snapshot before the item is trashed."""
-    if not path.exists():
-        return None
+def _path_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
 
+
+def _remove_path(path: Path) -> None:
+    if not _path_exists(path):
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _discard_snapshot(path: Path) -> None:
     try:
+        _remove_path(path)
+    except OSError as exc:
+        logger.error("Failed to remove incomplete recovery snapshot %s: %s", path, exc)
+
+
+def _copy_path(src: Path, dest: Path) -> None:
+    if src.is_symlink():
+        dest.symlink_to(src.readlink(), target_is_directory=src.is_dir())
+    elif src.is_dir():
+        shutil.copytree(
+            src,
+            dest,
+            symlinks=True,
+            ignore_dangling_symlinks=True,
+        )
+    else:
+        shutil.copy2(src, dest, follow_symlinks=False)
+
+
+def _create_recovery_snapshot(path: Path, category: str) -> tuple[str, Path]:
+    item_root: Path | None = None
+    try:
+        if not path.exists():
+            raise FileNotFoundError(f"Recovery source does not exist: {path}")
         original = _validate_original_path(path)
         RECOVERY_BASE_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            RECOVERY_BASE_DIR.chmod(0o700)  # may hold session transcripts
-        except OSError:
-            pass
+        RECOVERY_BASE_DIR.parent.chmod(0o700)
+        RECOVERY_BASE_DIR.chmod(0o700)
 
         item_id = f"{datetime.now():%Y%m%d-%H%M%S-%f}-{_safe_name(original.name)}"
         item_root = RECOVERY_BASE_DIR / item_id
         payload_root = item_root / "payload"
-        payload_root.mkdir(parents=True, exist_ok=True)
+        item_root.mkdir(mode=0o700)
+        item_root.chmod(0o700)
+        payload_root.mkdir()
 
         snapshot = payload_root / original.name
-        if original.is_dir():
-            shutil.copytree(
-                str(original),
-                str(snapshot),
-                symlinks=True,
-                ignore_dangling_symlinks=True,
+        _copy_path(original, snapshot)
+
+        size_bytes = _payload_size(snapshot)
+        if size_bytes > _MAX_ITEM_BYTES:
+            raise ValueError(
+                f"Recovery snapshot is {size_bytes} bytes; limit is {_MAX_ITEM_BYTES}"
             )
-        else:
-            shutil.copy2(str(original), str(snapshot), follow_symlinks=False)
 
         metadata = {
             "id": item_id,
@@ -93,35 +127,67 @@ def create_recovery_snapshot(path: Path, category: str) -> str | None:
             "original_path": str(original),
             "snapshot_path": str(snapshot),
             "created": datetime.now().timestamp(),
-            "size_bytes": _payload_size(snapshot),
+            "size_bytes": size_bytes,
         }
         (item_root / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2)
         )
-        _prune_snapshots()
+        return item_id, item_root
+    except (OSError, ValueError, shutil.Error):
+        if item_root is not None:
+            _discard_snapshot(item_root)
+        raise
+
+
+def create_recovery_snapshot(path: Path, category: str) -> str | None:
+    """Create a recovery snapshot before the item is trashed."""
+    item_root: Path | None = None
+    try:
+        item_id, item_root = _create_recovery_snapshot(path, category)
+        _prune_snapshots({item_root})
         return item_id
     except (OSError, ValueError, shutil.Error) as exc:
         logger.warning("Failed to create recovery snapshot for %s: %s", path, exc)
+        if item_root is not None:
+            _discard_snapshot(item_root)
         return None
 
 
-def _prune_snapshots() -> None:
-    """Drop oldest snapshots beyond the item-count or total-size cap."""
+def create_recovery_snapshots(items: list[tuple[Path, str]]) -> list[str] | None:
+    if not items:
+        return []
+    created: list[tuple[str, Path]] = []
     try:
-        items = [d for d in RECOVERY_BASE_DIR.iterdir() if d.is_dir()]
-    except OSError:
-        return
+        for path, category in items:
+            created.append(_create_recovery_snapshot(path, category))
+        _prune_snapshots({item_root for _, item_root in created})
+        return [item_id for item_id, _ in created]
+    except (OSError, ValueError, shutil.Error) as exc:
+        logger.warning("Failed to create recovery snapshot batch: %s", exc)
+        for _, item_root in created:
+            _discard_snapshot(item_root)
+        return None
+
+
+def _prune_snapshots(protected: set[Path]) -> None:
+    items = [d for d in RECOVERY_BASE_DIR.iterdir() if d.is_dir()]
     items.sort(key=lambda d: d.name)  # timestamp-prefixed → chronological
     sizes = {d: _payload_size(d) for d in items}
+    protected_items = [item for item in items if item in protected]
+    if len(protected_items) != len(protected):
+        raise OSError("Recovery snapshot batch is incomplete")
+    protected_size = sum(sizes[item] for item in protected_items)
+    if len(protected_items) > _MAX_ITEMS or protected_size > _MAX_TOTAL_BYTES:
+        raise OSError("Recovery snapshot batch exceeds retention limits")
     total = sum(sizes.values())
     # Oldest-first removal until within both caps.
     while items and (len(items) > _MAX_ITEMS or total > _MAX_TOTAL_BYTES):
-        victim = items.pop(0)
+        victim = next((item for item in items if item not in protected), None)
+        if victim is None:
+            raise OSError("Recovery snapshot batch cannot satisfy retention limits")
+        items.remove(victim)
         total -= sizes.get(victim, 0)
-        try:
-            shutil.rmtree(victim, ignore_errors=True)
-        except OSError:
-            pass
+        _remove_path(victim)
 
 
 def list_recovery_items() -> list[RecoveryInfo]:
@@ -175,20 +241,35 @@ def restore_recovery_item(item_id: str, overwrite: bool = False) -> tuple[bool, 
             return False, "Snapshot payload is missing"
 
         original.parent.mkdir(parents=True, exist_ok=True)
-        if original.exists():
+        if _path_exists(original):
             if not overwrite:
                 return False, "Original path already exists"
-            send2trash(str(original))
 
-        if snapshot.is_dir():
-            shutil.copytree(
-                str(snapshot),
-                str(original),
-                symlinks=True,
-                ignore_dangling_symlinks=True,
-            )
-        else:
-            shutil.copy2(str(snapshot), str(original), follow_symlinks=False)
+        transaction_id = uuid4().hex
+        stage = original.with_name(f".{original.name}.asm-stage-{transaction_id}")
+        rollback = original.with_name(f".{original.name}.asm-rollback-{transaction_id}")
+        moved = False
+        installed = False
+        try:
+            _copy_path(snapshot, stage)
+            if snapshot.is_dir() != stage.is_dir() or _payload_size(snapshot) != _payload_size(stage):
+                raise OSError("Recovery staging validation failed")
+            if _path_exists(original):
+                os.replace(original, rollback)
+                moved = True
+            os.replace(stage, original)
+            installed = True
+            if moved:
+                send2trash(str(rollback))
+                if _path_exists(rollback):
+                    raise OSError("Previous live path was not moved to trash")
+        except OSError:
+            if installed and _path_exists(original):
+                _remove_path(original)
+            if moved and _path_exists(rollback):
+                os.replace(rollback, original)
+            _discard_snapshot(stage)
+            raise
         return True, str(original)
     except (OSError, ValueError, KeyError, json.JSONDecodeError, shutil.Error) as exc:
         logger.warning("Failed to restore recovery item %s: %s", item_id, exc)

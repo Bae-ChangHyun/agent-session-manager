@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,31 @@ logger = logging.getLogger(__name__)
 UNKNOWN_MODEL = "(unknown)"
 
 
+class AmbiguousSessionIdError(ValueError):
+    pass
+
+
+class CodexScanError(RuntimeError):
+    pass
+
+
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_ROLLOUT_UUID_RE = re.compile(
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl\Z"
+)
+
+
+def _validate_session_ref(session_ref: str) -> str:
+    if not isinstance(session_ref, str) or not _SESSION_ID_RE.fullmatch(session_ref):
+        raise ValueError(f"Invalid Codex session id: {session_ref!r}")
+    return session_ref
+
+
+def _rollout_filename_id(path: Path) -> str | None:
+    match = _ROLLOUT_UUID_RE.search(path.name)
+    return match.group(1) if match else None
+
+
 def _session_dirs() -> list[Path]:
     """Every Codex sessions/ dir to scan (one per account home)."""
     from asm import models
@@ -42,15 +68,29 @@ def is_available() -> bool:
     return any(d.exists() for d in _session_dirs())
 
 
-def _rollout_files(limit: int | None = None) -> list[Path]:
+def _rollout_files(
+    limit: int | None = None, *, require_complete: bool = False
+) -> list[Path]:
     """Return rollout files newest-first across every Codex home (optionally capped)."""
     files: list[Path] = []
     for directory in _session_dirs():
-        if not directory.exists():
+        try:
+            directory.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            if require_complete:
+                raise CodexScanError(f"Unable to scan Codex sessions in {directory}: {exc}") from exc
+            continue
+        if not directory.is_dir():
+            if require_complete:
+                raise CodexScanError(f"Unable to scan Codex sessions: not a directory: {directory}")
             continue
         try:
-            files.extend(directory.rglob("rollout-*.jsonl"))
-        except (PermissionError, OSError):
+            files.extend(list(directory.rglob("rollout-*.jsonl")))
+        except (PermissionError, OSError) as exc:
+            if require_complete:
+                raise CodexScanError(f"Unable to scan Codex sessions in {directory}: {exc}") from exc
             continue
     files.sort(key=lambda f: _safe_mtime(f), reverse=True)
     return files[:limit] if limit else files
@@ -64,14 +104,7 @@ def _safe_mtime(f: Path) -> float:
 
 
 def total_session_count() -> int:
-    total = 0
-    try:
-        for directory in _session_dirs():
-            if directory.exists():
-                total += sum(1 for _ in directory.rglob("rollout-*.jsonl"))
-        return total
-    except (PermissionError, OSError):
-        return 0
+    return len(_rollout_files(require_complete=True))
 
 
 # Memo of the ledger read so one refresh serves every aggregation once.
@@ -95,7 +128,7 @@ def _scanned_sessions() -> list[dict]:
     return sessions
 
 
-def _scan_session(f: Path) -> dict | None:
+def _scan_session(f: Path, *, require_valid: bool = False) -> dict | None:
     """Parse one rollout file into a summary dict.
 
     Returns ``{id, cwd, model, first_prompt, git_branch, started, usage}`` or
@@ -107,13 +140,31 @@ def _scan_session(f: Path) -> dict | None:
     model = ""
     try:
         with open(f) as fh:
-            for line in fh:
+            for line_number, line in enumerate(fh, start=1):
+                if not line.strip():
+                    continue
                 try:
                     obj = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    if require_valid:
+                        raise CodexScanError(
+                            f"Malformed Codex session {f} at line {line_number}: {exc}"
+                        ) from exc
+                    continue
+                if not isinstance(obj, dict):
+                    if require_valid:
+                        raise CodexScanError(
+                            f"Malformed Codex session {f} at line {line_number}: expected object"
+                        )
                     continue
                 typ = obj.get("type")
                 payload = obj.get("payload", {})
+                if not isinstance(payload, dict):
+                    if require_valid:
+                        raise CodexScanError(
+                            f"Malformed Codex session {f} at line {line_number}: invalid payload"
+                        )
+                    continue
                 if typ == "session_meta":
                     meta = payload
                     model = payload.get("model", "") or model
@@ -123,6 +174,12 @@ def _scan_session(f: Path) -> dict | None:
                     model = payload.get("model", "") or model
                 elif typ == "event_msg" and payload.get("type") == "token_count":
                     info = payload.get("info") or {}
+                    if not isinstance(info, dict):
+                        if require_valid:
+                            raise CodexScanError(
+                                f"Malformed Codex session {f} at line {line_number}: invalid token info"
+                            )
+                        continue
                     usage = info.get("total_token_usage")
                     if usage:
                         last_usage = usage
@@ -133,14 +190,24 @@ def _scan_session(f: Path) -> dict | None:
                     text = _extract_input_text(payload.get("content", []))
                     if text and not text.startswith("#") and not text.startswith("<"):
                         first_prompt = text[:SUMMARY_MAX_CHARS]
-    except OSError:
+    except OSError as exc:
+        if require_valid:
+            raise CodexScanError(f"Unable to read Codex session {f}: {exc}") from exc
         return None
     if meta is None:
+        if require_valid:
+            raise CodexScanError(f"Malformed Codex session {f}: missing session_meta")
         return None
+    session_id = meta.get("id") or _rollout_filename_id(f) or meta.get("session_id") or f.stem
+    cwd = meta.get("cwd", "") or ""
+    if require_valid and not isinstance(session_id, str):
+        raise CodexScanError(f"Malformed Codex session {f}: invalid session id")
+    if require_valid and not isinstance(cwd, str):
+        raise CodexScanError(f"Malformed Codex session {f}: invalid cwd")
     git = meta.get("git") or {}
     return {
-        "id": meta.get("id", f.stem),
-        "cwd": meta.get("cwd", "") or "",
+        "id": session_id,
+        "cwd": cwd,
         "model": model or meta.get("model", "") or "",
         "first_prompt": first_prompt,
         "git_branch": git.get("branch", "") if isinstance(git, dict) else "",
@@ -224,17 +291,28 @@ def get_sessions_by_paths(paths) -> list[SessionDetail]:
     return result
 
 
-def find_session(session_id: str) -> SessionDetail | None:
+def find_session(session_id: str, cwd: str | None = None) -> SessionDetail | None:
     """Locate one Codex session by id (full filename scan).
 
     Returns its SessionDetail (carrying ``cwd`` and the rollout ``project_dir``)
     or None if no rollout matches.
     """
-    f = _find_rollout(session_id)
+    f = _find_rollout(session_id, cwd)
     if f is None:
         return None
-    info = _scan_session(f)
-    return _detail_from_info(info) if info is not None else None
+    info = _scan_session(f, require_valid=True)
+    return _detail_from_info(info)
+
+
+def get_session_cwd(session_id: str, project_dir: str) -> str:
+    query = _validate_session_ref(session_id)
+    info = _scan_session(Path(project_dir), require_valid=True)
+    if info["id"] != query:
+        raise ValueError(f"Codex session id does not match rollout: {session_id}")
+    cwd = info["cwd"]
+    if not cwd:
+        raise ValueError(f"Codex session has no recorded cwd: {session_id}")
+    return cwd
 
 
 def get_session_messages(session_id: str, project_dir: str | None = None, limit: int = 50) -> list[dict]:
@@ -242,6 +320,7 @@ def get_session_messages(session_id: str, project_dir: str | None = None, limit:
 
     ``project_dir`` carries the rollout file path (set by get_project_sessions).
     """
+    _validate_session_ref(session_id)
     path = Path(project_dir) if project_dir else _find_rollout(session_id)
     if not path or not path.exists():
         return []
@@ -282,11 +361,23 @@ def _extract_message_text(content) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _find_rollout(session_id: str) -> Path | None:
-    for f in _rollout_files():
-        if session_id in f.name:
-            return f
-    return None
+def _find_rollout(session_id: str, cwd: str | None = None) -> Path | None:
+    query = _validate_session_ref(session_id)
+    matches: list[tuple[Path, str]] = []
+    for f in _rollout_files(require_complete=True):
+        info = _scan_session(f, require_valid=True)
+        candidate_id = info.get("id")
+        if (
+            isinstance(candidate_id, str)
+            and candidate_id.startswith(query)
+            and (cwd is None or info.get("cwd") == cwd)
+        ):
+            matches.append((f, candidate_id))
+    exact = [match for match in matches if match[1] == query]
+    candidates = exact or matches
+    if len(candidates) > 1:
+        raise AmbiguousSessionIdError(f"Session id matches multiple Codex sessions: {session_id}")
+    return candidates[0][0] if candidates else None
 
 
 def get_period_usage(period: str = "daily") -> list[dict]:
@@ -395,7 +486,10 @@ def move_session(rollout_path: str, new_cwd: str) -> bool:
     except OSError:
         return False
     try:
-        create_recovery_snapshot(p, "codex-session")
+        snapshot_id = create_recovery_snapshot(p, "codex-session")
+        if not isinstance(snapshot_id, str) or not _SESSION_ID_RE.fullmatch(snapshot_id):
+            logger.warning("Recovery snapshot failed for Codex session: %s", rollout_path)
+            return False
         out, changed = [], False
         for line in p.read_text().splitlines():
             if not line.strip():

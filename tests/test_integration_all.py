@@ -15,6 +15,7 @@ from asm.services import backup as backup_service
 from asm.services import claude_data, cleaner, codex_data, recovery
 from asm import models
 
+from tests.async_utils import run_async_test
 from tests.test_feature_smoke import _fake_send2trash, _setup_fake_claude
 
 
@@ -271,7 +272,7 @@ class TestUIBothModes:
                 app.action_refresh()
                 await pilot.pause()
 
-        asyncio.run(run())
+        run_async_test(run())
 
     def test_codex_merged_into_projects_tab(self, monkeypatch, tmp_path):
         _setup_fake_codex(monkeypatch, tmp_path)
@@ -291,7 +292,7 @@ class TestUIBothModes:
                 paths = {p.path for p in pane._all_projects}
                 assert {"/work/proj-a", "/work/proj-b"} <= paths
 
-        asyncio.run(run())
+        run_async_test(run())
 
 
 class TestDashboardPeriodAndEditor:
@@ -312,7 +313,7 @@ class TestDashboardPeriodAndEditor:
                     await pilot.pause(); await asyncio.sleep(0.3); await pilot.pause()
                     assert d._period == expected
 
-        asyncio.run(run())
+        run_async_test(run())
 
     def test_instruction_file_editor_saves(self, tmp_path):
         from asm.screens.file_editor import FileEditorScreen
@@ -334,7 +335,7 @@ class TestDashboardPeriodAndEditor:
                 assert target.read_text().startswith("# rules")
                 assert saved == [True]
 
-        asyncio.run(run())
+        run_async_test(run())
 
 
 def test_projects_resume_action_sets_target_and_exits(monkeypatch, tmp_path):
@@ -350,4 +351,4 @@ def test_projects_resume_action_sets_target_and_exits(monkeypatch, tmp_path):
             await pilot.pause()
         assert app.resume_target == ("sid-1", "claude", "/work/proj")
 
-    asyncio.run(run())
+    run_async_test(run())

@@ -178,7 +178,7 @@ class CCTuiApp(App):
         claude_data.refresh_usage_cache()
         for pane in self.query(
             "DashboardPane, ProjectsPane, FileHistoryPane, "
-            "DebugTodosPane, MigratePane, BackupsPane, ArtifactsPane"
+            "DebugTodosPane, MigratePane, BackupsPane, ArtifactsPane, AgentImportPane"
         ):
             if hasattr(pane, "refresh_data"):
                 pane.refresh_data()

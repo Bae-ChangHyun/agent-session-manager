@@ -15,7 +15,15 @@ from asm.screens.confirm import ConfirmScreen
 from asm.i18n import t
 from rich.markup import escape
 from asm.services.claude_data import get_session_messages
-from asm.services.migrate import get_available_projects, migrate_sessions
+from asm.services.migrate import (
+    MigrationValidationError,
+    ProjectPathResolutionError,
+    get_available_projects,
+    get_target_replacement_scope,
+    migrate_sessions,
+    validate_migration_target,
+)
+from asm.utils import format_bytes
 from asm.widgets.action_bar import ActionBar
 
 
@@ -136,7 +144,7 @@ class MigratePane(Container):
 
     def _render_actions(self) -> None:
         bar = self.query_one("#migrate-actions", ActionBar)
-        mode_label = "Append" if self._mode == "append" else "Overwrite"
+        mode_label = "Append" if self._mode == "append" else "Replace entire target"
         bar.set_actions(
             [
                 ("toggle_mode", f"Mode: {mode_label}", "#555555"),
@@ -153,13 +161,23 @@ class MigratePane(Container):
             self._start_migrate()
 
     def _load_projects(self) -> None:
-        projects = get_available_projects()
+        try:
+            projects = get_available_projects()
+        except (MigrationValidationError, ProjectPathResolutionError) as exc:
+            self.app.call_from_thread(self._show_project_load_error, str(exc))
+            return
         project_sessions = {}
         for encoded, hint in projects:
             session_dir = PROJECTS_DIR / encoded
             count = len(list(session_dir.glob("*.jsonl"))) if session_dir.exists() else 0
             project_sessions[encoded] = count
         self.app.call_from_thread(self._build_trees, projects, project_sessions)
+
+    def _show_project_load_error(self, message: str) -> None:
+        result = self.query_one("#migrate-result", Static)
+        result.update(f"[red]{t('mig.failed')}:[/] {escape(message)}")
+        result.display = True
+        self.app.notify(message, severity="error")
 
     def _build_trees(self, projects: list[tuple[str, str]], project_sessions: dict[str, int]) -> None:
         source_tree = self.query_one("#source-tree", Tree)
@@ -423,18 +441,49 @@ class MigratePane(Container):
         if self._source_encoded == self._target_encoded:
             self.app.notify(t("mig.same_error"), severity="error")
             return
+        try:
+            validate_migration_target(self._target_hint, self._target_encoded)
+        except (MigrationValidationError, ProjectPathResolutionError, OSError) as exc:
+            self.app.notify(str(exc), severity="error")
+            return
         if not self._selected_sessions:
             self.app.notify(t("mig.no_sessions_selected"), severity="error")
             return
 
         sel = len(self._selected_sessions)
         total = len(self._session_rows)
+        if self._mode == "overwrite" and sel != total:
+            self.app.notify(
+                "Replace entire target requires all source sessions to be selected",
+                severity="error",
+            )
+            return
         count_info = f"all {total}" if sel == total else f"{sel} of {total}"
-        self.app.push_screen(
-            ConfirmScreen(
+        if self._mode == "overwrite":
+            try:
+                scope = get_target_replacement_scope(self._target_encoded, self._target_hint)
+            except (MigrationValidationError, ProjectPathResolutionError, OSError) as exc:
+                self.app.notify(str(exc), severity="error")
+                return
+            index_scope = "sessions-index.json" if scope.has_index else "no sessions-index.json"
+            message = (
+                "Replace entire target?\n\n"
+                f"Source: {self._source_hint}\n"
+                f"Target: {self._target_hint}\n"
+                f"Source scope: all {total} sessions\n\n"
+                "Entire target content will be moved to trash:\n"
+                f"{scope.sessions} session(s), {scope.memory_files} memory file(s), "
+                f"{index_scope}, {scope.other_entries} other entry/entries, "
+                f"{format_bytes(scope.total_bytes)} total\n\n"
+                "[dim]Source originals are kept.[/]"
+            )
+        else:
+            message = (
                 t("mig.confirm", src=self._source_hint, tgt=self._target_hint, mode=self._mode)
                 + f"\n({count_info} sessions selected)"
-            ),
+            )
+        self.app.push_screen(
+            ConfirmScreen(message),
             callback=lambda ok: self._do_migrate() if ok else None,
         )
 
@@ -443,10 +492,8 @@ class MigratePane(Container):
         tgt_hint = self._target_hint
         src_enc = self._source_encoded
         tgt_enc = self._target_encoded
-        # Always pass the explicit selection — implicit "empty means all"
-        # semantics once bulk-copied a whole project by accident.
-        selected = list(self._selected_sessions)
         mode = self._mode
+        selected = None if mode == "overwrite" else list(self._selected_sessions)
         self.run_worker(
             lambda: self._execute_migrate(src_hint, tgt_hint, src_enc, tgt_enc, mode, selected),
             thread=True,
